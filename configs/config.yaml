@@ -1,0 +1,44 @@
+app:
+  name: "DebateEdge"
+  version: "0.1.0"
+  environment: "development"
+
+
+debate:
+  max_turns: 10
+  default_side: "against"
+  supported_sides:
+    - "for"
+    - "against"
+
+llm:
+  default_model: "llama-3.1-8b-instant"
+  complex_model: "llama-3.3-70b-versatile"
+  temperature: 0.7
+  max_tokens: 1024
+
+observability:
+  langsmith:
+    enabled: false
+    project: "debateedge"
+    tracing: true
+  logfire:
+    enabled: false
+    service_name: "debateedge"
+    environment: "deployment"
+
+memory:
+  buffer_max_messages: 20
+  summary_max_tokens: 500
+
+retrieval:
+  chroma:
+    collection_name: "debate_session"
+    top_k: 5
+  pinecone:
+    index_name: "debateedge-arguments"
+    top_k: 5 
+    namespace: "arguments"
+
+
+

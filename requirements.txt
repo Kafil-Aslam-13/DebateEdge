@@ -1,0 +1,41 @@
+# LLM + LANGCHAIN + LANGGRAPH
+langchain
+langchain-core
+langgraph
+langchain-community
+langchain-groq
+litellm
+
+#OBSERVABILITY
+logfire
+langsmith
+
+# VECTOR STORES
+chromadb
+pinecone-client
+
+# EMBEDDINGS
+sentence-transformers
+cohere
+
+# API
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+
+# Frontend
+streamlit
+requests
+
+# Utilities
+python-dotenv
+pyyaml
+joblib
+
+# DEV
+pytest
+pytest-cov
+httpx
+
+-e .

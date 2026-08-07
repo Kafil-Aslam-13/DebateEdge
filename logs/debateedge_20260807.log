@@ -1,0 +1,11 @@
+[2026-08-07 15:05:27] INFO | sanity | Settings loaded: Settings(app=DebateEdge),env=development,model=llama3-8b-8192
+[2026-08-07 15:07:20] INFO | sanity | Settings loaded: Settings(app=DebateEdge),env=development,model=llama3-8b-8192
+[2026-08-07 15:08:09] INFO | src.services.debate_service | DebateService initialised with model: llama3-8b-8192
+[2026-08-07 15:08:29] INFO | src.services.debate_service | Opening debate | topic='Social media does more harm than good' | ai_side=against
+[2026-08-07 15:16:09] INFO | src.services.debate_service | DebateService initialised with model: llama-3.1-8b-instant
+[2026-08-07 15:16:35] INFO | src.services.debate_service | Opening debate | topic='Social media does more harm than good' | ai_side=against
+[2026-08-07 15:16:37] INFO | src.services.debate_service | Opening statement generated successfully.
+[2026-08-07 15:18:10] INFO | src.services.debate_service | Generating counterargument | topic='Social media does more harm than good' | turns=0
+[2026-08-07 15:18:11] INFO | src.services.debate_service | Counterargument generated successfully.
+[2026-08-07 15:20:25] INFO | src.services.debate_service | Generating counterargument | topic='Social media does more harm than good' | turns=2
+[2026-08-07 15:20:25] INFO | src.services.debate_service | Counterargument generated successfully.
