@@ -28,6 +28,8 @@ class CoachingError(DebateEdgeError):
 class GatewayError(DebateEdgeError):
     """LLM Gateway - All models failed or rate limit hit."""
 
+class GraphError(DebateEdgeError):
+    """LangGraph execution failed"""
 class MemoryError(DebateEdgeError):
     """Memory read write failed"""
 

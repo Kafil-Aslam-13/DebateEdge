@@ -29,3 +29,4 @@ data/fallacies/*
 
 # Logfire
 .logfire/
+logs

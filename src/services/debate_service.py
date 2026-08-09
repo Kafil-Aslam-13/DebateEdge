@@ -1,23 +1,26 @@
-"""Debate service
+"""Debate service — Sprint 2.
 
-Orchestrates the basic debate flow:
-topic + side + user argument -> AI counterargument
+Sprint 1: used a simple LCEL chain (prompt | llm | parser)
+Sprint 2: replaced by LangGraph workflow with:
+          - Classification node
+          - Scoring node
+          - Conditional routing
+          - Three handler nodes
+          - Counterargument node
 
-This is the layer debate_graph.py and the API both call into.
-No LangGraph and No memory yet
-Just a clean chain that works end to end.
+The service is the only layer that knows about both the graph
+AND the outside world (CLI, API). It translates between them.
 """
 
 from langchain_groq import ChatGroq
 
 from src.core.config import get_settings
-from src.core.exceptions import DebateError
+from src.core.exceptions import DebateError, GraphError
 from src.core.logger import get_logger
-from src.parsers.debate_parsers import (
-    debate_response_parser,
-    opening_statement_parser,
-)
-from src.prompts.debate_prompts import debate_prompt, opening_prompt
+from src.graphs.debate_graph import get_debate_graph
+from src.graphs.state import DebateState
+from src.parsers.debate_parsers import opening_statement_parser
+from src.prompts.debate_prompts import opening_prompt
 
 logger = get_logger(__name__)
 
@@ -27,86 +30,100 @@ class DebateService:
     def __init__(self) -> None:
         settings = get_settings()
 
+        # Opening statement still uses simple chain
+        # (no classification needed for AI's own opening)
         self.llm = ChatGroq(
             model=settings.default_model,
             temperature=settings.temperature,
             max_tokens=settings.max_tokens,
             groq_api_key=settings.groq_api_key,
         )
-
-        # LCEL chains — prompt | llm | parser
-        self.debate_chain = debate_prompt | self.llm | debate_response_parser
         self.opening_chain = opening_prompt | self.llm | opening_statement_parser
 
-        logger.info(f"DebateService initialised with model: {settings.default_model}")
+        # LangGraph for all user argument processing
+        self.graph = get_debate_graph()
+
+        logger.info(
+            f"DebateService (Sprint 2) initialised | "
+            f"model={settings.default_model}"
+        )
 
     def open_debate(self, topic: str, user_side: str) -> str:
-        """Generate AI opening statement.
-
-        AI takes the opposite side of whatever the user chose.
-
-        Args:
-            topic:     The debate topic
-            user_side: "for" or "against" (user's side)
-
-        Returns:
-            AI opening statement string
-        """
-        # AI argues opposite side to user
+        """Generate AI opening statement (simple chain — no graph needed)."""
         ai_side = "against" if user_side == "for" else "for"
-
         try:
             logger.info(f"Opening debate | topic='{topic}' | ai_side={ai_side}")
-
-            response = self.opening_chain.invoke({
-                "topic": topic,
-                "side": ai_side,
-            })
-
-            logger.info("Opening statement generated successfully.")
-            return response
-
+            return self.opening_chain.invoke({"topic": topic, "side": ai_side})
         except Exception as e:
-            raise DebateError(f"Failed to generate opening statement: {e}") from e
+            raise DebateError(f"Opening statement failed: {e}") from e
 
-    def argue(
+    def process_argument(
         self,
         topic: str,
         user_side: str,
         user_argument: str,
         debate_history: list,
-    ) -> str:
-        """Generate AI counterargument to user's argument.
+        turn_number: int = 1,
+    ) -> dict:
+        """Process user argument through the full LangGraph workflow.
 
         Args:
-            topic:          The debate topic
-            user_side:      User's chosen side ("for" or "against")
+            topic:          Debate topic
+            user_side:      User's side ("for" or "against")
             user_argument:  What the user just argued
-            debate_history: List of previous messages in this debate
+            debate_history: Previous messages in this debate
+            turn_number:    Which turn we're on
 
         Returns:
-            AI counterargument string
+            Dict with:
+                ai_response:       AI's counterargument
+                argument_quality:  "strong" | "weak" | "fallacy"
+                argument_score:    0-10
+                score_breakdown:   {"logic": X, "evidence": X, "clarity": X}
+                quality_reasoning: Why this quality was assigned
+                handler_note:      What the handler decided
         """
-        ai_side = "against" if user_side == "for" else "for"
-
         try:
             logger.info(
-                f"Generating counterargument | "
-                f"topic='{topic}' | "
-                f"turns={len(debate_history)}"
+                f"Processing argument | turn={turn_number} | "
+                f"topic='{topic}'"
             )
 
-            response = self.debate_chain.invoke({
+            # Build initial state for this turn
+            initial_state: DebateState = {
                 "topic": topic,
-                "side": ai_side,
+                "user_side": user_side,
                 "user_argument": user_argument,
+                "turn_number": turn_number,
                 "debate_history": debate_history,
-            })
+                "argument_quality": "",
+                "quality_reasoning": "",
+                "argument_score": 0,
+                "score_breakdown": {},
+                "handler_note": "",
+                "ai_response": "",
+                "error": "",
+                "has_error": False,
+            }
 
-            logger.info("Counterargument generated successfully.")
-            return response
+            # Run through graph
+            final_state = self.graph.invoke(initial_state)
+
+            logger.info(
+                f"Argument processed | "
+                f"quality={final_state.get('argument_quality')} | "
+                f"score={final_state.get('argument_score')}/10"
+            )
+
+            return {
+                "ai_response":       final_state.get("ai_response", ""),
+                "argument_quality":  final_state.get("argument_quality", ""),
+                "argument_score":    final_state.get("argument_score", 0),
+                "score_breakdown":   final_state.get("score_breakdown", {}),
+                "quality_reasoning": final_state.get("quality_reasoning", ""),
+                "handler_note":      final_state.get("handler_note", ""),
+                "error":             final_state.get("error", ""),
+            }
 
         except Exception as e:
-            raise DebateError(
-                f"Failed to generate counterargument: {e}"
-            ) from e
+            raise GraphError(f"Graph execution failed: {e}") from e
