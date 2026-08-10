@@ -42,6 +42,14 @@ class DebateState(TypedDict):
     # counterargument node o/p
     ai_response:str
 
+    # Fallacy
+    contains_fallacy:bool
+    fallacy_name:str
+    fallacy_type:str
+    fallacy_severity:str
+    fallacy_explanation:str
+    fallacy_correction:str
+
     # Error Tracking
     error:str
     has_error: bool

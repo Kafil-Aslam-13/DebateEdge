@@ -26,7 +26,7 @@ from src.core.config import get_settings
 from src.core.constants import (
     QUALITY_STRONG, QUALITY_WEAK, QUALITY_FALLACY,
     NODE_CLASSIFY, NODE_COUNTER, NODE_FALLACY,
-    NODE_SCORE, NODE_STRONG, NODE_WEAK,
+    NODE_SCORE, NODE_STRONG, NODE_WEAK, NODE_FALLACY_DETECT
 )
 from src.core.exceptions import GraphError
 from src.core.logger import get_logger
@@ -43,7 +43,7 @@ from src.prompts.scoring_prompts import (
     classification_prompt,
     scoring_prompt
 )
-
+from src.agents.fallacy_agent import FallacyDetectionService
 logger = get_logger(__name__)
 
 
@@ -198,6 +198,73 @@ def handle_fallacy_node(state: DebateState) -> dict:
         )
     }
 
+def detect_fallacy_details_node(state: DebateState) -> dict:
+    """Deep fallacy analysis — only runs when classifier flagged fallacy.
+
+    WHY SEPARATE FROM classify_argument_node:
+    classify_argument_node: quick classification (strong/weak/fallacy)
+    This node: deep analysis (which fallacy, severity, correction)
+
+    Separating them means:
+    - Quick classify runs every turn (cheap, fast)
+    - Deep detection only when needed (expensive, skipped otherwise)
+    """
+    logger.info("[Node: fallacy_detect] Running detailed fallacy detection")
+
+    if state.get("argument_quality") != QUALITY_FALLACY:
+        logger.info("[Node: fallacy_detect] No fallacy flagged — skipping.")
+        return {
+            "contains_fallacy":    False,
+            "fallacy_name":        "none",
+            "fallacy_type":        "none",
+            "fallacy_severity":    "none",
+            "fallacy_explanation": "",
+            "fallacy_correction":  "none",
+        }
+
+    try:
+        service = FallacyDetectionService()
+
+        result = service.detect(
+            argument=state["user_argument"],
+            topic=state["topic"],
+            user_side=state["user_side"],
+        )
+
+        explanation = ""
+        if result.contains_fallacy and result.fallacy_name != "none":
+            explanation = service.explain(
+                fallacy_name=result.fallacy_name,
+                argument=state["user_argument"],
+            )
+
+        logger.info(
+            f"[Node: fallacy_detect] "
+            f"name={result.fallacy_name} | "
+            f"severity={result.severity}"
+        )
+
+        return {
+            "contains_fallacy":    result.contains_fallacy,
+            "fallacy_name":        result.fallacy_name,
+            "fallacy_type":        result.fallacy_type.value,
+            "fallacy_severity":    result.severity.value,
+            "fallacy_explanation": explanation,
+            "fallacy_correction":  result.correction,
+        }
+
+    except Exception as e:
+        logger.error(f"[Node: fallacy_detect] Failed: {e}")
+        return {
+            "contains_fallacy":    False,
+            "fallacy_name":        "none",
+            "fallacy_type":        "none",
+            "fallacy_severity":    "none",
+            "fallacy_explanation": "",
+            "fallacy_correction":  "none",
+            "error":               str(e),
+        }
+
 
 def generate_counterargument_node(state: DebateState) -> dict:
     """Generate AI counterargument adapted to argument quality."""
@@ -266,6 +333,7 @@ def build_debate_graph() -> StateGraph:
 
     graph.add_node(NODE_CLASSIFY, classify_argument_node)
     graph.add_node(NODE_SCORE,    score_argument_node)
+    graph.add_node(NODE_FALLACY_DETECT,detect_fallacy_details_node)
     graph.add_node(NODE_STRONG,   handle_strong_node)
     graph.add_node(NODE_WEAK,     handle_weak_node)
     graph.add_node(NODE_FALLACY,  handle_fallacy_node)
@@ -281,9 +349,10 @@ def build_debate_graph() -> StateGraph:
         {
             NODE_STRONG:  NODE_STRONG,
             NODE_WEAK:    NODE_WEAK,
-            NODE_FALLACY: NODE_FALLACY,
+            NODE_FALLACY: NODE_FALLACY_DETECT,
         }
     )
+    graph.add_edge(NODE_FALLACY_DETECT,NODE_FALLACY)
 
     graph.add_edge(NODE_STRONG,  NODE_COUNTER)
     graph.add_edge(NODE_WEAK,    NODE_COUNTER)

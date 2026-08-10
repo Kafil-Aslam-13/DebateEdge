@@ -116,6 +116,17 @@ def run_debate():
         if reasoning:
             print(f"  Feedback:  {reasoning}")
 
+        # Sprint 3 — show fallacy details
+        if result.get("contains_fallacy"):
+            print(f"\nFALLACY DETECTED")
+            print(f"{'─'*40}")
+            print(f"  Name:       {result.get('fallacy_name', '').upper()}")
+            print(f"  Severity:   {result.get('fallacy_severity', '').upper()}")
+            if result.get("fallacy_explanation"):
+                print(f"  Explained:  {result.get('fallacy_explanation')}")
+            if result.get("fallacy_correction", "none") != "none":
+                print(f"  Fix it:     {result.get('fallacy_correction')}")
+
         # ── AI counterargument ────────────────────────────────────────────────
         print(f"\nAI COUNTERARGUMENT ({ai_side.upper()})")
         print(f"{'─'*40}")

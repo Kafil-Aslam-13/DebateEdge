@@ -104,6 +104,12 @@ class DebateService:
                 "ai_response": "",
                 "error": "",
                 "has_error": False,
+                "contains_fallacy":    False,
+                "fallacy_name":        "none",
+                "fallacy_type":        "none",
+                "fallacy_severity":    "none",
+                "fallacy_explanation": "",
+                "fallacy_correction":  "none"
             }
 
             # Run through graph
@@ -123,6 +129,11 @@ class DebateService:
                 "quality_reasoning": final_state.get("quality_reasoning", ""),
                 "handler_note":      final_state.get("handler_note", ""),
                 "error":             final_state.get("error", ""),
+                "contains_fallacy":    final_state.get("contains_fallacy", False),
+                "fallacy_name":        final_state.get("fallacy_name", "none"),
+                "fallacy_severity":    final_state.get("fallacy_severity", "none"),
+                "fallacy_explanation": final_state.get("fallacy_explanation", ""),
+                "fallacy_correction":  final_state.get("fallacy_correction", "none"),
             }
 
         except Exception as e:
