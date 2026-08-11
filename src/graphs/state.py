@@ -50,6 +50,13 @@ class DebateState(TypedDict):
     fallacy_explanation:str
     fallacy_correction:str
 
+
+    #   Memory
+    debate_summary: str
+    similar_past_args: list
+    memory_updated:bool
+
+
     # Error Tracking
     error:str
     has_error: bool

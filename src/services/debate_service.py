@@ -17,13 +17,21 @@ from langchain_groq import ChatGroq
 from src.core.config import get_settings
 from src.core.exceptions import DebateError, GraphError
 from src.core.logger import get_logger
-from src.graphs.debate_graph import get_debate_graph
+from src.graphs.debate_graph import get_debate_graph,reset_memory,get_buffer_memory
 from src.graphs.state import DebateState
 from src.parsers.debate_parsers import opening_statement_parser
 from src.prompts.debate_prompts import opening_prompt
 
 logger = get_logger(__name__)
 
+def _summary_memory_snapshot() -> str:
+    """Get current summary from module-level memory for initial state.
+
+    We inject the existing summary into initial_state so the graph
+    has it available at the start of each turn, not just at the end.
+    """
+    from src.graphs.debate_graph import _summary_memory
+    return _summary_memory.get_summary()
 
 class DebateService:
 
@@ -49,14 +57,14 @@ class DebateService:
         )
 
     def open_debate(self, topic: str, user_side: str) -> str:
-        """Generate AI opening statement (simple chain — no graph needed)."""
+        """Generate AI opening statement + reset all memory for new session"""
+        reset_memory()
         ai_side = "against" if user_side == "for" else "for"
         try:
             logger.info(f"Opening debate | topic='{topic}' | ai_side={ai_side}")
             return self.opening_chain.invoke({"topic": topic, "side": ai_side})
         except Exception as e:
             raise DebateError(f"Opening statement failed: {e}") from e
-
     def process_argument(
         self,
         topic: str,
@@ -66,22 +74,6 @@ class DebateService:
         turn_number: int = 1,
     ) -> dict:
         """Process user argument through the full LangGraph workflow.
-
-        Args:
-            topic:          Debate topic
-            user_side:      User's side ("for" or "against")
-            user_argument:  What the user just argued
-            debate_history: Previous messages in this debate
-            turn_number:    Which turn we're on
-
-        Returns:
-            Dict with:
-                ai_response:       AI's counterargument
-                argument_quality:  "strong" | "weak" | "fallacy"
-                argument_score:    0-10
-                score_breakdown:   {"logic": X, "evidence": X, "clarity": X}
-                quality_reasoning: Why this quality was assigned
-                handler_note:      What the handler decided
         """
         try:
             logger.info(
@@ -90,12 +82,13 @@ class DebateService:
             )
 
             # Build initial state for this turn
+            buffer = get_buffer_memory()
             initial_state: DebateState = {
                 "topic": topic,
                 "user_side": user_side,
                 "user_argument": user_argument,
                 "turn_number": turn_number,
-                "debate_history": debate_history,
+                "debate_history": buffer.get_as_tuples(),
                 "argument_quality": "",
                 "quality_reasoning": "",
                 "argument_score": 0,
@@ -104,12 +97,16 @@ class DebateService:
                 "ai_response": "",
                 "error": "",
                 "has_error": False,
+
                 "contains_fallacy":    False,
                 "fallacy_name":        "none",
                 "fallacy_type":        "none",
                 "fallacy_severity":    "none",
                 "fallacy_explanation": "",
-                "fallacy_correction":  "none"
+                "fallacy_correction":  "none",
+                "debate_summary": _summary_memory_snapshot(),
+                "similar_past_args":[],
+                "memory_updated": False
             }
 
             # Run through graph
@@ -134,6 +131,10 @@ class DebateService:
                 "fallacy_severity":    final_state.get("fallacy_severity", "none"),
                 "fallacy_explanation": final_state.get("fallacy_explanation", ""),
                 "fallacy_correction":  final_state.get("fallacy_correction", "none"),
+
+                "debate_summary":    final_state.get("debate_summary", ""),
+                "similar_past_args": final_state.get("similar_past_args", []),
+                "memory_updated":    final_state.get("memory_updated", False),
             }
 
         except Exception as e:

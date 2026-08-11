@@ -26,7 +26,7 @@ from src.core.config import get_settings
 from src.core.constants import (
     QUALITY_STRONG, QUALITY_WEAK, QUALITY_FALLACY,
     NODE_CLASSIFY, NODE_COUNTER, NODE_FALLACY,
-    NODE_SCORE, NODE_STRONG, NODE_WEAK, NODE_FALLACY_DETECT
+    NODE_SCORE, NODE_STRONG, NODE_WEAK, NODE_FALLACY_DETECT,NODE_MEMORY_UPDATE
 )
 from src.core.exceptions import GraphError
 from src.core.logger import get_logger
@@ -43,9 +43,27 @@ from src.prompts.scoring_prompts import (
     classification_prompt,
     scoring_prompt
 )
+
+from src.memory.buffer_memory import DebateBufferMemory
+from src.memory.summary_memory import DebateSummaryMemory
+from src.memory.vector_memory import DebateVectorMemory
 from src.agents.fallacy_agent import FallacyDetectionService
 logger = get_logger(__name__)
 
+_buffer_memory  = DebateBufferMemory(window_size=6)
+_summary_memory = DebateSummaryMemory()
+_vector_memory  = DebateVectorMemory(top_k=3)
+
+def reset_memory() -> None:
+    """Clear all memory — call at start of each new debate session."""
+    _buffer_memory.clear()
+    _summary_memory.clear()
+    _vector_memory.clear()
+    logger.info("All memory cleared for new debate session.")
+
+def get_buffer_memory() -> DebateBufferMemory:
+    """Expose buffer memory so debate_service can read history from it."""
+    return _buffer_memory
 
 # ── LLM instances ─────────────────────────────────────────────────────────────
 
@@ -307,6 +325,76 @@ def generate_counterargument_node(state: DebateState) -> dict:
             "has_error":   True,
         }
 
+def update_memory_node(state: DebateState) -> dict:
+    """Update all three memory types after each debate turn.
+
+    ORDER MATTERS:
+    1. Check buffer — is it near limit?
+    2. If yes: pop oldest messages → pass to summary → summary updates
+    3. Add this turn to buffer
+    4. Store argument in vector memory with fallacy metadata
+    5. Search vector memory for similar past arguments
+
+    WHY fallacy_name IN VECTOR STORE:
+    Your DebateVectorMemory supports find_previous_fallacies().
+    This only works if we store the fallacy_name in metadata.
+    Sprint 5 coaching uses this to say:
+    'You committed ad_hominem in turn 2 and again in turn 5.'
+    """
+    logger.info(
+        f"[Node: memory_update] Updating memory | turn={state['turn_number']}"
+    )
+
+    user_argument = state.get("user_argument", "")
+    ai_response   = state.get("ai_response", "")
+    quality       = state.get("argument_quality", "weak")
+    score         = state.get("argument_score", 0)
+    turn_number   = state.get("turn_number", 1)
+    fallacy_name  = state.get("fallacy_name", "none")
+
+    if _buffer_memory.is_near_limit():
+        logger.info(
+            "[Node: memory_update] Buffer near limit — "
+            "popping oldest messages for summary"
+        )
+        # Pop 2 oldest messages (1 turn = human + AI)
+        oldest_messages = _buffer_memory.pop_oldest(2)
+
+        if oldest_messages:
+            _summary_memory.update(oldest_messages)
+            logger.info("[Node: memory_update] Summary updated from popped messages")
+
+    # ── 2. Buffer: add this turn 
+    _buffer_memory.add_turn(user_argument, ai_response)
+
+    
+    _vector_memory.store_argument(
+        argument=user_argument,
+        turn_number=turn_number,
+        quality=quality,
+        score=float(score),
+        fallacy_name=fallacy_name,  
+    )
+    similar_past_args = []
+    if turn_number > 1:
+        similar_past_args = _vector_memory.find_similar(user_argument)
+
+        if similar_past_args:
+            logger.info(
+                f"[Node: memory_update] "
+                f"Found {len(similar_past_args)} similar past arguments"
+            )
+
+    debate_summary = _summary_memory.get_summary()
+
+    logger.info("[Node: memory_update] All memory updated.")
+
+    return {
+        "debate_summary":    debate_summary,
+        "similar_past_args": similar_past_args,
+        "memory_updated":    True,
+    }
+
 
 # ── Router ─────────────────────────────────────────────────────────────────────
 
@@ -338,6 +426,7 @@ def build_debate_graph() -> StateGraph:
     graph.add_node(NODE_WEAK,     handle_weak_node)
     graph.add_node(NODE_FALLACY,  handle_fallacy_node)
     graph.add_node(NODE_COUNTER,  generate_counterargument_node)
+    graph.add_node(NODE_MEMORY_UPDATE,update_memory_node)
 
     graph.set_entry_point(NODE_CLASSIFY)
 
@@ -357,7 +446,8 @@ def build_debate_graph() -> StateGraph:
     graph.add_edge(NODE_STRONG,  NODE_COUNTER)
     graph.add_edge(NODE_WEAK,    NODE_COUNTER)
     graph.add_edge(NODE_FALLACY, NODE_COUNTER)
-    graph.add_edge(NODE_COUNTER, END)
+    graph.add_edge(NODE_COUNTER,NODE_MEMORY_UPDATE)
+    graph.add_edge(NODE_MEMORY_UPDATE, END)
 
     compiled = graph.compile()
     logger.info("Debate graph compiled successfully.")

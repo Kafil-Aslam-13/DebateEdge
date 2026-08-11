@@ -127,6 +127,24 @@ def run_debate():
             if result.get("fallacy_correction", "none") != "none":
                 print(f"  Fix it:     {result.get('fallacy_correction')}")
 
+
+
+        summary = result.get("debate_summary", "")
+        similar = result.get("similar_past_args", [])
+        if summary:
+            print(f"\nDEBATE SUMMARY SO FAR")
+            print("─" * 40)
+            # truncate for display
+            display_summary = summary[:200] + "..." if len(summary) > 200 else summary
+            print(f"  {display_summary}")
+        if similar:
+            print(f"\nSIMILAR PAST ARGUMENT DETECTED")
+            print("─" * 40)
+            best = similar[0]
+            display_arg = best['argument'][:80]
+            print(f"  Turn {best['turn_number']}: \"{display_arg}...\"")
+            print(f"  Quality: {best['quality'].upper()} | Score: {best['score']}/10 | Similarity: {best['similarity']}")
+
         # ── AI counterargument ────────────────────────────────────────────────
         print(f"\nAI COUNTERARGUMENT ({ai_side.upper()})")
         print(f"{'─'*40}")

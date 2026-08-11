@@ -49,6 +49,7 @@ CONFIG_PATH = "configs/config.yaml"
 MODELS_CONFIG_PATH = "configs/models.yaml"
 PROMPTS_CONFIG_PATH = "configs/prompts.yaml"
 
+#  Different nodes in a graph
 NODE_CLASSIFY = "classify_argument"
 NODE_SCORE    = "score_argument"
 NODE_ROUTE    = "route_by_quality"
@@ -57,3 +58,4 @@ NODE_WEAK     = "handle_weak"
 NODE_FALLACY  = "handle_fallacy"
 NODE_COUNTER  = "generate_counterargument"
 NODE_FALLACY_DETECT = "detect_fallacy_details"
+NODE_MEMORY_UPDATE = "update_memory"
