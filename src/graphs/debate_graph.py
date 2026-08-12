@@ -26,8 +26,10 @@ from src.core.config import get_settings
 from src.core.constants import (
     QUALITY_STRONG, QUALITY_WEAK, QUALITY_FALLACY,
     NODE_CLASSIFY, NODE_COUNTER, NODE_FALLACY,
-    NODE_SCORE, NODE_STRONG, NODE_WEAK, NODE_FALLACY_DETECT,NODE_MEMORY_UPDATE
+    NODE_SCORE, NODE_STRONG, NODE_WEAK, NODE_FALLACY_DETECT,
+    NODE_MEMORY_UPDATE , NODE_RAG_RETRIEVE
 )
+
 from src.core.exceptions import GraphError
 from src.core.logger import get_logger
 from src.graphs.state import DebateState
@@ -48,11 +50,31 @@ from src.memory.buffer_memory import DebateBufferMemory
 from src.memory.summary_memory import DebateSummaryMemory
 from src.memory.vector_memory import DebateVectorMemory
 from src.agents.fallacy_agent import FallacyDetectionService
-logger = get_logger(__name__)
 
+
+from src.retrieval.chroma_store import DebateChromaStore
+from src.retrieval.pinecone_db import DebatePineconeDB
+from langchain_core.documents import Document
+
+logger = get_logger(__name__)
+#  memory instance
 _buffer_memory  = DebateBufferMemory(window_size=6)
 _summary_memory = DebateSummaryMemory()
 _vector_memory  = DebateVectorMemory(top_k=3)
+
+# module-level retrieval instance
+_chroma_store  = DebateChromaStore()
+_pinecone_db   = DebatePineconeDB()
+
+
+def _format_docs(docs:list[Document])->str:
+    """Format retrieved documents into a single context string"""
+    if not docs:
+        return "no relevance evidence retrieved"
+    return "\n\n".join(
+        f"[source {i+1}]: {doc.page_content}"
+        for i ,  doc in enumerate(docs)
+    )
 
 def reset_memory() -> None:
     """Clear all memory — call at start of each new debate session."""
@@ -312,6 +334,7 @@ def generate_counterargument_node(state: DebateState) -> dict:
             "score":             state.get("argument_score", 5),
             "quality_reasoning": state.get("quality_reasoning", ""),
             "ai_side":           ai_side,
+            "rag_context":       state.get("rag_context","no relevant evidence retrieved")
         })
 
         logger.info("[Node: counter] Counterargument generated successfully.")
@@ -324,6 +347,51 @@ def generate_counterargument_node(state: DebateState) -> dict:
             "error":       str(e),
             "has_error":   True,
         }
+def rag_retrieval_node(state:DebateState)-> dict:
+    """retrieves relevant evidence before generating counterargument.
+    TWO-STAGE RETRIEVAL:
+    Stage 1: ChromaDB (in-session, HuggingFace, fast)
+             → similarity search for most relevant evidence
+    Stage 2: Pinecone (persistent, Cohere, richer)
+             → MMR search for diverse additional evidence
+             → only runs if Pinecone is configured
+
+    COMBINED CONTEXT:
+    Results from both are merged into one rag_context string.
+    The counterargument node injects this into the debate prompt.
+    """
+    logger.info(f"[NODE: rag_retrieval] Retrieving relevant evidance")
+    query=state.get("user_argument","")
+    topic=state.get("topic","")
+
+    if not query.strip():
+        return {"rag_context":"No relevant evidence retrieved."}
+
+    try:
+        chroma_docs=_chroma_store.retrieve_similar(query=f"{topic}: {query}",k=2)
+        pinecone_docs=_pinecone_db.retrieve_mmr(
+            query=f"{topic}:{query}",
+            k=2,
+            lambda_mult=0.5
+        )
+
+        all_docs = chroma_docs + pinecone_docs
+        rag_context = _format_docs(all_docs)
+        logger.info(
+            f"[Node: rag_retrieve] Retrieved "
+            f"{len(chroma_docs)} chroma + "
+            f"{len(pinecone_docs)} pinecone docs"
+        )
+        return {"rag_context": rag_context}
+    except Exception as e:
+        logger.warning(f"[Node: rag_retrieve] Failed: {e}")
+        return {"rag_context": "Evidence retrieval unavailable."}
+    
+
+
+
+
+
 
 def update_memory_node(state: DebateState) -> dict:
     """Update all three memory types after each debate turn.
@@ -425,6 +493,7 @@ def build_debate_graph() -> StateGraph:
     graph.add_node(NODE_STRONG,   handle_strong_node)
     graph.add_node(NODE_WEAK,     handle_weak_node)
     graph.add_node(NODE_FALLACY,  handle_fallacy_node)
+    graph.add_node(NODE_RAG_RETRIEVE,rag_retrieval_node)
     graph.add_node(NODE_COUNTER,  generate_counterargument_node)
     graph.add_node(NODE_MEMORY_UPDATE,update_memory_node)
 
@@ -443,9 +512,11 @@ def build_debate_graph() -> StateGraph:
     )
     graph.add_edge(NODE_FALLACY_DETECT,NODE_FALLACY)
 
-    graph.add_edge(NODE_STRONG,  NODE_COUNTER)
-    graph.add_edge(NODE_WEAK,    NODE_COUNTER)
-    graph.add_edge(NODE_FALLACY, NODE_COUNTER)
+    graph.add_edge(NODE_STRONG,  NODE_RAG_RETRIEVE)
+    graph.add_edge(NODE_WEAK,    NODE_RAG_RETRIEVE)
+    graph.add_edge(NODE_FALLACY, NODE_RAG_RETRIEVE)
+    graph.add_edge(NODE_RAG_RETRIEVE,NODE_COUNTER)
+    
     graph.add_edge(NODE_COUNTER,NODE_MEMORY_UPDATE)
     graph.add_edge(NODE_MEMORY_UPDATE, END)
 

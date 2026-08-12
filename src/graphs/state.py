@@ -56,6 +56,9 @@ class DebateState(TypedDict):
     similar_past_args: list
     memory_updated:bool
 
+    # rag
+    rag_context:str
+
 
     # Error Tracking
     error:str

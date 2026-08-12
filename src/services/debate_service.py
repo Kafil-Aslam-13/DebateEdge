@@ -106,7 +106,8 @@ class DebateService:
                 "fallacy_correction":  "none",
                 "debate_summary": _summary_memory_snapshot(),
                 "similar_past_args":[],
-                "memory_updated": False
+                "memory_updated": False,
+                "rag_context":""
             }
 
             # Run through graph
@@ -135,6 +136,7 @@ class DebateService:
                 "debate_summary":    final_state.get("debate_summary", ""),
                 "similar_past_args": final_state.get("similar_past_args", []),
                 "memory_updated":    final_state.get("memory_updated", False),
+                "rag_context":       final_state.get("rag_context","")
             }
 
         except Exception as e:
