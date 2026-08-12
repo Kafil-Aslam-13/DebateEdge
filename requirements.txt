@@ -42,5 +42,7 @@ langchain-pinecone
 langchain-cohere
 langchain-huggingface
 pinecone
+# llm gateway
+litellm
 
 -e .

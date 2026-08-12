@@ -60,3 +60,11 @@ NODE_COUNTER  = "generate_counterargument"
 NODE_FALLACY_DETECT = "detect_fallacy_details"
 NODE_MEMORY_UPDATE = "update_memory"
 NODE_RAG_RETRIEVE = "rag_retrieval"
+
+#  Task types for LLM GATEWAY
+TASK_CLASSIFICATION = "classification"
+TASK_SCORING        = "scoring"
+TASK_DEBATE         = "debate"
+TASK_FALLACY        = "fallacy"
+TASK_SUMMARY        = "summary"
+TASK_EXPLANATION    = "explanation"

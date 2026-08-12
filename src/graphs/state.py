@@ -4,7 +4,7 @@ The state is the single object that flows through every node
 in the graph. Every node reads from it and writes back to it.
 """
 
-from typing import Annotated , Any
+from typing import Annotated , Any , Literal
 from typing_extensions import TypedDict
 from langgraph.graph import add_messages
 
@@ -29,7 +29,7 @@ class DebateState(TypedDict):
     debate_history: Annotated[list,add_messages]
 
     # Classification node Output
-    argument_quality:str  # strong | weak | fallacy
+    argument_quality:Literal["strong","weak","fallacy"]  # strong | weak | fallacy
     quality_reasoning:str 
 
     #  Scoring node output

@@ -83,10 +83,9 @@ _classification_few_short = FewShotPromptTemplate(
          "Now classify this argument:\n"
         "Argument: {argument}\n"
         "Topic context: {topic}\n\n"
-        "Return only valid JSON.\n"
-        "Do not include markdown or explanations outside the JSON.\n"
-        "Respond in this exact JSON format:\n"
-        '{{{{"quality": "strong|weak|fallacy", "reasoning": "one sentence explanation"}}}}'
+        "Classify the argument as strong, weak, or fallacy "
+        "and provide one sentence explaining your decision."
+        
     ),
     input_variables=["argument","topic"]
 )
@@ -101,54 +100,94 @@ classification_prompt = ChatPromptTemplate.from_messages([
 scoring_prompt = ChatPromptTemplate.from_messages([
     (
         "system",
-        "You are an expert debate scorer. Score arguments rigorously and fairly.",
+        """You are an expert debate scorer.
+
+Score arguments rigorously and fairly.
+
+Evaluate the argument itself rather than the quality of the
+person presenting it."""
     ),
     (
         "human",
-        """Score the following debate argument on a scale of 0-10.
- 
-Topic: {topic}
-User's side: {user_side}
-Argument: {argument}
-Pre-classification: {quality} (use this as context)
- 
-Score these three dimensions (0-10 each):
-- Logic:    Is the reasoning sound and coherent?
-- Evidence: Are claims supported with facts or examples?
-- Clarity:  Is the argument clear and well-structured?
- 
-do not calculate an overall score.
-The application will calculate the overall score.
+        """Score the following debate argument.
 
-Return only valid JSON.
-Do not include markdown or explanations outside the JSON.
+Topic:
+{topic}
 
+User's side:
+{user_side}
 
-Return only valid JSON with:
-{{
-  "logic": <0-10>,
-  "evidence": <0-10>,
-  "clarity": <0-10>,
-  "feedback": "<one sentence of specific actionable feedback>"
-}}
-"""
+Argument:
+{argument}
+
+Pre-classification:
+{quality}
+
+Evaluate these dimensions from 0 to 10:
+
+Logic:
+Is the reasoning sound, coherent, and logically connected?
+
+Evidence:
+Are factual claims supported with relevant evidence, examples,
+or reasoning?
+
+Clarity:
+Is the argument clear, specific, and well structured?
+
+Do not calculate an overall score.
+The application calculates the overall score.
+
+Provide one sentence of specific actionable feedback."""
     ),
 ])
 
 #  Handler prompt - Using Partial technique .partial
 
 _HANDLER_BASE = ChatPromptTemplate.from_messages([
-    ("system","You are a  debate coach giving targetted feedback. {coaching_mode}"),
-    ("human",
-     """ the user made a {quality} argument about: {topic}
-     Their argument: {argument}
-     Score: {score}/10
-     Reasoning: {quality_reasoning}
-     
-     {handler_instruction}
-     
-     Then give your counterargument representingh the {ai_side} position.
-     Keep total response Under 150 words"""),
+    (
+        "system",
+        """You are an expert debate opponent and debate coach.
+
+You are arguing the {ai_side} position.
+
+Coaching strategy:
+{coaching_mode}"""
+    ),
+    (
+        "human",
+        """Topic:
+{topic}
+
+User's argument:
+{argument}
+
+Argument quality:
+{quality}
+
+Quality reasoning:
+{quality_reasoning}
+
+Score:
+{score}/10
+
+Coaching instruction:
+{handler_instruction}
+
+Relevant evidence:
+{rag_context}
+
+First apply the coaching strategy internally.
+
+Then produce a concise counterargument representing the
+{ai_side} position.
+
+Use the evidence when relevant.
+
+Do not merely repeat the user's argument.
+
+Keep the total response under 150 words."""
+    ),
 ])
 
 #  Pre Fill the coach mode and handler instructions for each handler type:

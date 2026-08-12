@@ -18,32 +18,31 @@ GRAPH STRUCTURE:
 """
 
 import json
-
-from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, END
 
 from src.core.config import get_settings
+from src.gateway.llm_gateway import get_gateway, reset_gateway
 from src.core.constants import (
     QUALITY_STRONG, QUALITY_WEAK, QUALITY_FALLACY,
     NODE_CLASSIFY, NODE_COUNTER, NODE_FALLACY,
     NODE_SCORE, NODE_STRONG, NODE_WEAK, NODE_FALLACY_DETECT,
-    NODE_MEMORY_UPDATE , NODE_RAG_RETRIEVE
+    NODE_MEMORY_UPDATE , NODE_RAG_RETRIEVE ,
+    TASK_CLASSIFICATION,TASK_DEBATE,TASK_SCORING,
 )
 
 from src.core.exceptions import GraphError
 from src.core.logger import get_logger
 from src.graphs.state import DebateState
 from src.parsers.scoring_parsers import (
-    get_structured_classifier,
-    get_structured_scorer,
-    handler_response_parser
+    ClassificationOutput,
+    ScoreOutput
 )
 from src.prompts.scoring_prompts import (
     strong_handler_prompt,
     weak_handler_prompt,
     fallacy_handler_prompt,
     classification_prompt,
-    scoring_prompt
+    scoring_prompt,
 )
 
 from src.memory.buffer_memory import DebateBufferMemory
@@ -67,6 +66,32 @@ _chroma_store  = DebateChromaStore()
 _pinecone_db   = DebatePineconeDB()
 
 
+def _prompt_to_messages(prompt_value) -> list[dict]:
+    """Convert LangChain prompt messages to OpenAI-compatible messages."""
+
+    role_map = {
+        "system": "system",
+        "human": "user",
+        "ai": "assistant",
+    }
+
+    messages = []
+
+    for message in prompt_value.messages:
+        role = role_map.get(message.type)
+
+        if role is None:
+            raise ValueError(
+                f"Unsupported LangChain message type: {message.type!r}"
+            )
+
+        messages.append({
+            "role": role,
+            "content": message.content,
+        })
+
+    return messages
+
 def _format_docs(docs:list[Document])->str:
     """Format retrieved documents into a single context string"""
     if not docs:
@@ -81,32 +106,13 @@ def reset_memory() -> None:
     _buffer_memory.clear()
     _summary_memory.clear()
     _vector_memory.clear()
+    reset_gateway()
     logger.info("All memory cleared for new debate session.")
 
 def get_buffer_memory() -> DebateBufferMemory:
     """Expose buffer memory so debate_service can read history from it."""
     return _buffer_memory
 
-# ── LLM instances ─────────────────────────────────────────────────────────────
-
-def _get_fast_llm() -> ChatGroq:
-    settings = get_settings()
-    return ChatGroq(
-        model=settings.default_model,
-        temperature=0.2,
-        max_tokens=256,
-        api_key=settings.groq_api_key,
-    )
-
-
-def _get_powerful_llm() -> ChatGroq:
-    settings = get_settings()
-    return ChatGroq(
-        model=settings.complex_model,
-        temperature=settings.temperature,
-        max_tokens=settings.max_tokens,
-        api_key=settings.groq_api_key,
-    )
 
 
 # ── Node functions ─────────────────────────────────────────────────────────────
@@ -119,31 +125,28 @@ def classify_argument_node(state: DebateState) -> dict:
         return {}
 
     try:
-        structured_llm = get_structured_classifier()
+        gateway = get_gateway()
 
-        result = structured_llm.invoke(
-            classification_prompt.format(
-                argument=state['user_argument'],
-                topic=state['topic']
-            )
-        )
+        prompt_value= classification_prompt.invoke({
+            "argument":state['user_argument'],
+            "topic": state["topic"],
+        })
+        messages = _prompt_to_messages(prompt_value)
 
-        quality   = result.quality   if hasattr(result, 'quality')   else result.get('quality', 'weak')
-        reasoning = result.reasoning if hasattr(result, 'reasoning') else result.get('reasoning', '')
 
-        if quality not in [QUALITY_STRONG, QUALITY_WEAK, QUALITY_FALLACY]:
-            logger.warning(f"Unknown quality '{quality}', defaulting to weak")
-            quality = QUALITY_WEAK
-
-        logger.info(f"[Node: classify] Quality={quality} | Reasoning={reasoning[:60]}")
+        result = gateway.complete(messages=messages,task_type=TASK_CLASSIFICATION,response_model=ClassificationOutput)
+        assert isinstance(result,ClassificationOutput)
+        
+        logger.info(f"[Node: classify] Quality={result.quality} | Reasoning={result.reasoning[:60]}")
 
         return {
-            "argument_quality":  quality,
-            "quality_reasoning": reasoning,
+            "argument_quality":  result.quality,
+            "quality_reasoning": result.reasoning,
         }
 
     except Exception as e:
-        logger.error(f"[Node: classify] Failed: {e}")
+        logger.error(f"[Node: classify] Failed:{e}")
+        logger.exception(e)
         return {
             "argument_quality":  QUALITY_WEAK,
             "quality_reasoning": "Classification failed, defaulting to weak",
@@ -160,42 +163,53 @@ def score_argument_node(state: DebateState) -> dict:
         return {}
 
     try:
-        structured_scorer = get_structured_scorer()
-        result = structured_scorer.invoke(
-    scoring_prompt.format(
-        topic=state["topic"],
-        user_side=state["user_side"],
-        argument=state["user_argument"],
-        quality=state.get("argument_quality", "weak"),
-    )
-)
+        gateway = get_gateway()
 
-        logic    = result.logic    if hasattr(result, 'logic')    else result.get('logic', 5)
-        evidence = result.evidence if hasattr(result, 'evidence') else result.get('evidence', 5)
-        clarity  = result.clarity  if hasattr(result, 'clarity')  else result.get('clarity', 5)
-        overall = (
-    logic * 0.4
-    + evidence * 0.4
-    + clarity * 0.2
-)
+        prompt_value = scoring_prompt.invoke({
+            "topic": state["topic"],
+            "user_side": state["user_side"],
+            "argument": state["user_argument"],
+            "quality": state.get(
+                "argument_quality",
+                QUALITY_WEAK,
+            ),
+        })
+
+        messages = _prompt_to_messages(prompt_value)
+ 
+        result=gateway.complete(messages,task_type=TASK_SCORING,response_model=ScoreOutput)
+
+        assert isinstance(result, ScoreOutput)
+
         
+        # Application calculates overall.
+        overall = round(
+            result.logic * 0.4
+            + result.evidence * 0.4
+            + result.clarity * 0.2,2
+        )
+        score_breakdown = {
+            "logic": result.logic,
+            "evidence": result.evidence,
+            "clarity": result.clarity,
+        }
 
         logger.info(
-            f"[Node: score] Overall={overall}/10 | "
-            f"Logic={logic} | Evidence={evidence} | Clarity={clarity}"
+            f"[Node: score] "
+            f"Overall={overall:.2f}/10 | "
+            f"Logic={result.logic} | "
+            f"Evidence={result.evidence} | "
+            f"Clarity={result.clarity}"
         )
 
         return {
-    "argument_score": round(overall, 1),
-    "score_breakdown": {
-        "logic": logic,
-        "evidence": evidence,
-        "clarity": clarity,
-    },
-}
+            "argument_score":  overall,
+            "score_breakdown": score_breakdown,
+        }
 
     except Exception as e:
         logger.error(f"[Node: score] Failed: {e}")
+        logger.exception(e)
         return {
             "argument_score":  5,
             "score_breakdown": {"logic": 5, "evidence": 5, "clarity": 5},
@@ -314,7 +328,7 @@ def generate_counterargument_node(state: DebateState) -> dict:
         return {"ai_response": "I encountered an issue. Please try again."}
 
     try:
-        powerful_llm = _get_powerful_llm()
+        gateway=get_gateway()
         ai_side = "against" if state["user_side"] == "for" else "for"
         quality = state.get("argument_quality", QUALITY_WEAK)
 
@@ -324,21 +338,36 @@ def generate_counterargument_node(state: DebateState) -> dict:
             QUALITY_FALLACY: fallacy_handler_prompt,
         }
         selected_prompt = prompt_map.get(quality, weak_handler_prompt)
-
-        chain = selected_prompt | powerful_llm | handler_response_parser
-
-        response = chain.invoke({
-            "topic":             state["topic"],
-            "argument":          state["user_argument"],
-            "quality":           quality,
-            "score":             state.get("argument_score", 5),
-            "quality_reasoning": state.get("quality_reasoning", ""),
-            "ai_side":           ai_side,
-            "rag_context":       state.get("rag_context","no relevant evidence retrieved")
+        prompt_value = selected_prompt.invoke({
+            "quality": quality,
+            "topic": state["topic"],
+            "argument": state["user_argument"],
+            "score": state.get("argument_score", 0),
+            "quality_reasoning": state.get(
+                "quality_reasoning",
+                "",
+            ),
+            "ai_side": ai_side,
+            "rag_context": state.get(
+                "rag_context",
+                "No relevant evidence retrieved.",
+            ),
         })
 
+        messages = _prompt_to_messages(prompt_value)
+        logger.debug(
+            "[Node: counter] Messages: %s",
+            messages,
+        )
+
+
+        content = gateway.complete(
+            messages=messages,
+            task_type=TASK_DEBATE,
+        )
+
         logger.info("[Node: counter] Counterargument generated successfully.")
-        return {"ai_response": response}
+        return {"ai_response": content}
 
     except Exception as e:
         logger.error(f"[Node: counter] Failed: {e}")

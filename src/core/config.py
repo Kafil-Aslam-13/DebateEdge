@@ -41,7 +41,11 @@ class Settings:
 
         # Model routing
         self.model_config = _models["models"]
-        self.fallback_models = _models["fallbacks"]
+        self.fallback_models = _models.get("fallbacks", [])
+
+        # Gateway Config 
+        self.task_routing=_models.get("task_routing",{})
+        self.gateway_config=_models.get("gateway",{}) 
 
         # Observability
         self.langsmith_enabled = _config["observability"]["langsmith"]["enabled"]
