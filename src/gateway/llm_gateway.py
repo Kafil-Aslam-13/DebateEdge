@@ -33,7 +33,8 @@ from src.core.config import get_settings
 from src.core.exceptions import GatewayError
 from src.core.logger import get_logger
 from  src.gateway.cost_tracker import CostTracker
-
+from src.observability.logfire_setup import get_logfire_span
+from src.observability.metrics import record_llm_cost
 logger = get_logger(__name__)
 T = TypeVar("T", bound=BaseModel)
 TaskType = Literal[
@@ -105,9 +106,6 @@ class LLMGateway:
             ).encode()
         ).hexdigest()
 
-
-
-
     def complete(
     self,
     messages: list[dict],
@@ -121,20 +119,15 @@ class LLMGateway:
         cache_key = self._cache_key(
             messages=messages,
             model_alias=model_alias,
-            response_model=response_model,
-        )
+            response_model=response_model,)
 
-    # ─────────────────────────────────────────
-    # CACHE
-    # ─────────────────────────────────────────
-
+        # ── CACHE CHECK ───────────────────────────────────────────────────────
         if self._cache_enabled and cache_key in self._cache:
             logger.info(
                 f"Gateway cache HIT | "
                 f"task={task_type} | "
                 f"model={model_alias} | "
-                f"structured={response_model is not None}"
-            )
+                f"structured={response_model is not None}")
 
             cached_content = self._cache[cache_key]
 
@@ -143,99 +136,90 @@ class LLMGateway:
                 model=model_alias,
                 prompt_tokens=0,
                 completion_tokens=0,
-                cached=True,
-            )
+                cached=True,)
+
+            #  log cache hit metric
+            record_llm_cost(
+                cost_usd=0.0,
+                tokens=0,
+                task_type=task_type,
+                model=model_alias,
+                cached=True,)
 
             if response_model is not None:
-                return response_model.model_validate_json(
-                    cached_content
-                )
+                return response_model.model_validate_json(cached_content)
 
             return cached_content
 
-    # ─────────────────────────────────────────
-    # LLM CALL
-    # ─────────────────────────────────────────
+    #  wrap entire LLM call in logfire span
+        with get_logfire_span(
+            "llm_gateway_call",
+            task_type=task_type,
+            model_alias=model_alias,
+            structured=response_model is not None,):
 
-        try:
+            try:
 
-            logger.info(
-                f"Gateway call | "
-                f"task={task_type} | "
-                f"model={model_alias} | "
-                f"structured={response_model is not None}"
-            )
+                logger.info(
+                    f"Gateway call | "
+                    f"task={task_type} | "
+                    f"model={model_alias} | "
+                    f"structured={response_model is not None}")
 
-            completion_kwargs = {
-                "model": model_alias,
-                "messages": messages,
-            }
+                completion_kwargs = {
+                    "model":    model_alias,
+                    "messages": messages,}
+                
 
-        # ─────────────────────────────────────
-        # STRUCTURED OUTPUT
-        # ─────────────────────────────────────
+            # ── STRUCTURED OUTPUT ─────────────────────────────────────────
+                if response_model is not None:
+                    completion_kwargs["response_format"] = {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name":   response_model.__name__,
+                            "schema": response_model.model_json_schema(),},}
 
-            if response_model is not None:
+                response = self._router.completion(**completion_kwargs)
+                content  = response.choices[0].message.content
 
-                completion_kwargs["response_format"] = {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": response_model.__name__,
-                        "schema": response_model.model_json_schema(),
-                    },
-                }
-
-            response = self._router.completion(
-                **completion_kwargs
-            )
-
-            content = response.choices[0].message.content
-
-        # ─────────────────────────────────────
-        # COST TRACKING
-        # ─────────────────────────────────────
-
-            usage = response.usage
-
-            self.cost_tracker.record(
+            # ── COST TRACKING ─────────────────────────────────────────────
+                usage  = response.usage
+                record = self.cost_tracker.record(
                 task_type=task_type,
                 model=response.model,
                 prompt_tokens=usage.prompt_tokens,
                 completion_tokens=usage.completion_tokens,
                 cached=False,
-            )
-
-        # ─────────────────────────────────────
-        # CACHE RAW CONTENT
-        # ─────────────────────────────────────
-
-            if self._cache_enabled:
-                self._cache[cache_key] = content
-
-        # ─────────────────────────────────────
-        # PYDANTIC VALIDATION
-        # ─────────────────────────────────────
-
-            if response_model is not None:
-
-                return response_model.model_validate_json(
-                    content
                 )
 
-            return content
+            # Sprint 8: log cost to Logfire metrics
+                record_llm_cost(
+                cost_usd=record.cost_usd,
+                tokens=record.total_tokens,
+                task_type=task_type,
+                model=response.model,
+                cached=False,
+                )
 
-        except Exception as e:
+            # ── CACHE RAW CONTENT ─────────────────────────────────────────
+                if self._cache_enabled:
+                    self._cache[cache_key] = content
 
-            logger.error(
+            # ── PYDANTIC VALIDATION ───────────────────────────────────────
+                if response_model is not None:
+                    return response_model.model_validate_json(content)
+
+                return content
+
+            except Exception as e:
+                logger.error(
                 f"Gateway failed | "
                 f"task={task_type} | "
                 f"error={e}"
-            )
-
-            raise GatewayError(
-                f"All models failed for task "
-                f"'{task_type}': {e}"
-            ) from e
+                )
+                raise GatewayError(
+                f"All models failed for task '{task_type}': {e}"
+                ) from e
 
     def get_cost_summary(self) -> dict:
         """Return session cost and token summary."""

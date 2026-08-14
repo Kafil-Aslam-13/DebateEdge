@@ -19,13 +19,17 @@ llm:
 
 observability:
   langsmith:
-    enabled: false
+    enabled: true
     project: "debateedge"
     tracing: true
   logfire:
-    enabled: false
+    enabled: true
     service_name: "debateedge"
     environment: "deployment"
+    scrub_fields:
+      - "api_key"
+      - "groq_api_key"
+      - "pinecone_api_key"
 
 memory:
   buffer_max_messages: 20

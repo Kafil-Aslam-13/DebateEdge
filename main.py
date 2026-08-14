@@ -10,6 +10,12 @@ Sprint 1 showed: just the AI counterargument
 Sprint 2 shows:  full graph output with classification + scoring
 """
 
+from src.observability.langsmith_setup import setup_langsmith
+from src.observability.logfire_setup import setup_logfire
+
+langsmith_ok = setup_langsmith()
+logfire_ok   = setup_logfire()
+
 from src.core.config import get_settings
 from src.core.logger import get_logger
 from src.services.debate_service import DebateService
@@ -35,8 +41,9 @@ def run_debate():
     service = DebateService()
 
     print(f"\n{'='*65}")
-    print(f"  {settings.app_name} — AI Debate & Argument Coach")
-    print(f"  Sprint 2: LangGraph Workflow Active")
+    print(f"   Observability Active")
+    print(f"  LangSmith: {'enabled' if langsmith_ok else 'disabled'}")
+    print(f"  Logfire:   {'enabled' if logfire_ok else 'disabled'}")
     print(f"{'='*65}\n")
 
     # Topic

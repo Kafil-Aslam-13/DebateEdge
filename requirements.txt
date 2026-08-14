@@ -7,7 +7,7 @@ langchain-groq
 litellm
 
 #OBSERVABILITY
-logfire
+logfire[httpx]
 langsmith
 
 # VECTOR STORES

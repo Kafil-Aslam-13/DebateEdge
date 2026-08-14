@@ -52,6 +52,7 @@ class Settings:
         self.langsmith_project = _config["observability"]["langsmith"]["project"]
         self.logfire_enabled = _config["observability"]["logfire"]["enabled"]
         self.logfire_service = _config["observability"]["logfire"]["service_name"]
+        self.logfire_scrub_fields=_config["observability"]["logfire"]["scrub_fields"]
 
         # Memory
         self.buffer_max_messages = _config["memory"]["buffer_max_messages"]

@@ -61,6 +61,18 @@ from langchain_core.documents import Document
 from src.guardrails.input_guard import InputGuard
 from src.guardrails.output_guard import OutputGuard
 
+
+from src.observability.logfire_setup import get_logfire_span
+from src.observability.metrics import (
+    record_argument_score,
+    record_fallacy_detected,
+    record_rag_retrieval,
+    record_session_turn,
+    record_guard_result,
+)
+
+
+
 logger = get_logger(__name__)
 #  memory instance
 _buffer_memory  = DebateBufferMemory(window_size=6)
@@ -134,35 +146,40 @@ def classify_argument_node(state: DebateState) -> dict:
     if state.get("has_error"):
         return {}
 
-    try:
-        gateway = get_gateway()
+    with get_logfire_span(
+        "node.classify_argument",
+        turn=state["turn_number"],
+        topic=state["topic"][:50],
+    ):
+        try:
+            gateway = get_gateway()
 
-        prompt_value= classification_prompt.invoke({
+            prompt_value= classification_prompt.invoke({
             "argument":state['user_argument'],
             "topic": state["topic"],
-        })
-        messages = _prompt_to_messages(prompt_value)
+            })
+            messages = _prompt_to_messages(prompt_value)
 
 
-        result = gateway.complete(messages=messages,task_type=TASK_CLASSIFICATION,response_model=ClassificationOutput)
-        assert isinstance(result,ClassificationOutput)
+            result = gateway.complete(messages=messages,task_type=TASK_CLASSIFICATION,response_model=ClassificationOutput)
+            assert isinstance(result,ClassificationOutput)
         
-        logger.info(f"[Node: classify] Quality={result.quality} | Reasoning={result.reasoning[:60]}")
+            logger.info(f"[Node: classify] Quality={result.quality} | Reasoning={result.reasoning[:60]}")
 
-        return {
-            "argument_quality":  result.quality,
-            "quality_reasoning": result.reasoning,
-        }
+            return {
+                "argument_quality":  result.quality,
+                "quality_reasoning": result.reasoning,
+            }
 
-    except Exception as e:
-        logger.error(f"[Node: classify] Failed:{e}")
-        logger.exception(e)
-        return {
-            "argument_quality":  QUALITY_WEAK,
-            "quality_reasoning": "Classification failed, defaulting to weak",
-            "error":             str(e),
-            "has_error":         False,
-        }
+        except Exception as e:
+            logger.error(f"[Node: classify] Failed:{e}")
+            logger.exception(e)
+            return {
+                "argument_quality":  QUALITY_WEAK,
+                "quality_reasoning": "Classification failed, defaulting to weak",
+                "error":             str(e),
+                "has_error":         False,
+            }
 
 
 def score_argument_node(state: DebateState) -> dict:
@@ -172,58 +189,69 @@ def score_argument_node(state: DebateState) -> dict:
     if state.get("has_error"):
         return {}
 
-    try:
-        gateway = get_gateway()
+    with get_logfire_span(
+        "node.score_argument",
+        turn=state["turn_number"],
+        quality=state.get("argument_quality", ""),
+    ):
+        try:
+            gateway = get_gateway()
 
-        prompt_value = scoring_prompt.invoke({
-            "topic": state["topic"],
-            "user_side": state["user_side"],
-            "argument": state["user_argument"],
-            "quality": state.get(
-                "argument_quality",
-                QUALITY_WEAK,
-            ),
-        })
+            prompt_value = scoring_prompt.invoke({
+                "topic": state["topic"],
+                "user_side": state["user_side"],
+                "argument": state["user_argument"],
+                "quality": state.get(
+                    "argument_quality",
+                    QUALITY_WEAK,
+                ),
+            })
 
-        messages = _prompt_to_messages(prompt_value)
+            messages = _prompt_to_messages(prompt_value)
  
-        result=gateway.complete(messages,task_type=TASK_SCORING,response_model=ScoreOutput)
+            result=gateway.complete(messages,task_type=TASK_SCORING,response_model=ScoreOutput)
 
-        assert isinstance(result, ScoreOutput)
+            assert isinstance(result, ScoreOutput)
 
         
-        # Application calculates overall.
-        overall = round(
-            result.logic * 0.4
-            + result.evidence * 0.4
-            + result.clarity * 0.2,2
-        )
-        score_breakdown = {
-            "logic": result.logic,
-            "evidence": result.evidence,
-            "clarity": result.clarity,
-        }
+            # Application calculates overall.
+            overall = round(
+                result.logic * 0.4
+                + result.evidence * 0.4
+                + result.clarity * 0.2,2
+            )
+            score_breakdown = {
+                "logic": result.logic,
+                "evidence": result.evidence,
+                "clarity": result.clarity,
+            }
+            record_argument_score(
+                score=overall,
+                quality=state.get("argument_quality",""),
+                turn_number=state["turn_number"],
+                topic=state["topic"]
+            )
 
-        logger.info(
-            f"[Node: score] "
-            f"Overall={overall:.2f}/10 | "
-            f"Logic={result.logic} | "
-            f"Evidence={result.evidence} | "
-            f"Clarity={result.clarity}"
-        )
+            logger.info(
+                f"[Node: score] "
+                f"Overall={overall:.2f}/10 | "
+                f"Logic={result.logic} | "
+                f"Evidence={result.evidence} | "
+                f"Clarity={result.clarity}"
+            )
 
-        return {
-            "argument_score":  overall,
-            "score_breakdown": score_breakdown,
-        }
+            return {
+                "argument_score":  overall,
+                "score_breakdown": score_breakdown,
+            }
 
-    except Exception as e:
-        logger.error(f"[Node: score] Failed: {e}")
-        logger.exception(e)
-        return {
-            "argument_score":  5,
-            "score_breakdown": {"logic": 5, "evidence": 5, "clarity": 5},
-        }
+        except Exception as e:
+            logger.error(f"[Node: score] Failed: {e}")
+            logger.exception(e)
+            return {
+                "argument_score":  5,
+                "score_breakdown": {"logic": 5, "evidence": 5, "clarity": 5},
+            }
 
 
 def handle_strong_node(state: DebateState) -> dict:
@@ -286,48 +314,60 @@ def detect_fallacy_details_node(state: DebateState) -> dict:
             "fallacy_correction":  "none",
         }
 
-    try:
-        service = FallacyDetectionService()
+    with get_logfire_span(
+        "node.detect_fallacy",
+        turn=state["turn_number"],
+    ):
 
-        result = service.detect(
-            argument=state["user_argument"],
-            topic=state["topic"],
-            user_side=state["user_side"],
-        )
+        try:
+            service = FallacyDetectionService()
 
-        explanation = ""
-        if result.contains_fallacy and result.fallacy_name != "none":
-            explanation = service.explain(
-                fallacy_name=result.fallacy_name,
+            result = service.detect(
                 argument=state["user_argument"],
+                topic=state["topic"],
+                user_side=state["user_side"],
             )
 
-        logger.info(
-            f"[Node: fallacy_detect] "
-            f"name={result.fallacy_name} | "
-            f"severity={result.severity}"
-        )
+            explanation = ""
+            if result.contains_fallacy and result.fallacy_name != "none":
+                explanation = service.explain(
+                    fallacy_name=result.fallacy_name,
+                    argument=state["user_argument"],
+                )
 
-        return {
-            "contains_fallacy":    result.contains_fallacy,
-            "fallacy_name":        result.fallacy_name,
-            "fallacy_type":        result.fallacy_type.value,
-            "fallacy_severity":    result.severity.value,
-            "fallacy_explanation": explanation,
-            "fallacy_correction":  result.correction,
-        }
 
-    except Exception as e:
-        logger.error(f"[Node: fallacy_detect] Failed: {e}")
-        return {
-            "contains_fallacy":    False,
-            "fallacy_name":        "none",
-            "fallacy_type":        "none",
-            "fallacy_severity":    "none",
-            "fallacy_explanation": "",
-            "fallacy_correction":  "none",
-            "error":               str(e),
-        }
+            record_fallacy_detected(
+                    fallacy_name=result.fallacy_name,
+                    severity=result.severity.value,
+                    turn_number=state["turn_number"],
+                )
+
+            logger.info(
+                f"[Node: fallacy_detect] "
+                f"name={result.fallacy_name} | "
+                f"severity={result.severity}"
+            )
+
+            return {
+                "contains_fallacy":    result.contains_fallacy,
+                "fallacy_name":        result.fallacy_name,
+                "fallacy_type":        result.fallacy_type.value,
+                "fallacy_severity":    result.severity.value,
+                "fallacy_explanation": explanation,
+                "fallacy_correction":  result.correction,
+            }
+
+        except Exception as e:
+            logger.error(f"[Node: fallacy_detect] Failed: {e}")
+            return {
+                "contains_fallacy":    False,
+                "fallacy_name":        "none",
+                "fallacy_type":        "none",
+                "fallacy_severity":    "none",
+                "fallacy_explanation": "",
+                "fallacy_correction":  "none",
+                "error":               str(e),
+            }
 
 
 
@@ -349,30 +389,42 @@ def input_guardrail_node(state: DebateState) -> dict:
         f"turn={state['turn_number']}"
     )
 
-    result, all_results = _input_guard.run(
-        argument=state["user_argument"],
-        topic=state["topic"],
-    )
+    with get_logfire_span(
+        "node.input_guardrail",
+        turn=state["turn_number"],
+    ):
+        
 
-    if result.action == GUARD_BLOCK:
-        logger.warning(
-            f"[Node: input_guard] BLOCKED | reason={result.reason}"
+        result, all_results = _input_guard.run(
+            argument=state["user_argument"],
+            topic=state["topic"],
         )
-        return {
-            "input_guard_passed": False,
-            "input_guard_action": GUARD_BLOCK,
-            "input_guard_reason": result.reason,
-            "has_error":          True,
-            "error":              f"Input blocked: {result.reason}",
-        }
+        for r in all_results:
+            record_guard_result(
+                guard_name=r.guard_name,
+                action=r.action,
+                guard_type="input",
+            )
 
-    logger.info("[Node: input_guard] All input checks passed.")
-    return {
-        "input_guard_passed": True,
-        "input_guard_action": result.action,
-        "input_guard_reason": result.reason,
-        "has_error":          False,
-    }
+        if result.action == GUARD_BLOCK:
+            logger.warning(
+                f"[Node: input_guard] BLOCKED | reason={result.reason}"
+            )
+            return {
+                "input_guard_passed": False,
+                "input_guard_action": GUARD_BLOCK,
+                "input_guard_reason": result.reason,
+                "has_error":          True,
+                "error":              f"Input blocked: {result.reason}",
+            }
+
+        logger.info("[Node: input_guard] All input checks passed.")
+        return {
+            "input_guard_passed": True,
+            "input_guard_action": result.action,
+            "input_guard_reason": result.reason,
+            "has_error":          False,
+        }
 
 
 
@@ -387,55 +439,62 @@ def generate_counterargument_node(state: DebateState) -> dict:
     if state.get("has_error"):
         return {"ai_response": "I encountered an issue. Please try again."}
 
-    try:
-        gateway=get_gateway()
-        ai_side = "against" if state["user_side"] == "for" else "for"
-        quality = state.get("argument_quality", QUALITY_WEAK)
+    with get_logfire_span(
+        "node.generate_counterargument",
+        turn=state["turn_number"],
+        quality=state.get("argument_quality", ""),
+    ):
+        
 
-        prompt_map = {
-            QUALITY_STRONG:  strong_handler_prompt,
-            QUALITY_WEAK:    weak_handler_prompt,
-            QUALITY_FALLACY: fallacy_handler_prompt,
-        }
-        selected_prompt = prompt_map.get(quality, weak_handler_prompt)
-        prompt_value = selected_prompt.invoke({
-            "quality": quality,
-            "topic": state["topic"],
-            "argument": state["user_argument"],
-            "score": state.get("argument_score", 0),
-            "quality_reasoning": state.get(
-                "quality_reasoning",
-                "",
-            ),
-            "ai_side": ai_side,
-            "rag_context": state.get(
-                "rag_context",
-                "No relevant evidence retrieved.",
-            ),
-        })
+        try:
+            gateway=get_gateway()
+            ai_side = "against" if state["user_side"] == "for" else "for"
+            quality = state.get("argument_quality", QUALITY_WEAK)
 
-        messages = _prompt_to_messages(prompt_value)
-        logger.debug(
-            "[Node: counter] Messages: %s",
-            messages,
-        )
+            prompt_map = {
+                QUALITY_STRONG:  strong_handler_prompt,
+                QUALITY_WEAK:    weak_handler_prompt,
+                QUALITY_FALLACY: fallacy_handler_prompt,
+            }
+            selected_prompt = prompt_map.get(quality, weak_handler_prompt)
+            prompt_value = selected_prompt.invoke({
+                "quality": quality,
+                "topic": state["topic"],
+                "argument": state["user_argument"],
+                "score": state.get("argument_score", 0),
+                "quality_reasoning": state.get(
+                    "quality_reasoning",
+                    "",
+                ),
+                "ai_side": ai_side,
+                "rag_context": state.get(
+                    "rag_context",
+                    "No relevant evidence retrieved.",
+                ),
+            })
+
+            messages = _prompt_to_messages(prompt_value)
+            logger.debug(
+                "[Node: counter] Messages: %s",
+                messages,
+            )
 
 
-        content = gateway.complete(
-            messages=messages,
-            task_type=TASK_DEBATE,
-        )
+            content = gateway.complete(
+                messages=messages,
+                task_type=TASK_DEBATE,
+            )
 
-        logger.info("[Node: counter] Counterargument generated successfully.")
-        return {"ai_response": content}
+            logger.info("[Node: counter] Counterargument generated successfully.")
+            return {"ai_response": content}
 
-    except Exception as e:
-        logger.error(f"[Node: counter] Failed: {e}")
-        return {
-            "ai_response": "I encountered an issue generating a response. Please try again.",
-            "error":       str(e),
-            "has_error":   True,
-        }
+        except Exception as e:
+            logger.error(f"[Node: counter] Failed: {e}")
+            return {
+                "ai_response": "I encountered an issue generating a response. Please try again.",
+                "error":       str(e),
+                "has_error":   True,
+            }
 
 
 
@@ -450,37 +509,49 @@ def output_guardrail_node(state: DebateState) -> dict:
     Logs all check results to state.
     """
     logger.info("[Node: output_guard] Running output guardrails")
+    with get_logfire_span(
+        "node.output_guardrail",
+        turn=state["turn_number"],
+    ):
+        
 
-    response = state.get("ai_response", "")
+        response = state.get("ai_response", "")
 
-    if not response:
-        return {
-            "output_guard_results": [],
-        }
+        if not response:
+            return {
+                "output_guard_results": [],
+            }
+    
 
-    final_response, results = _output_guard.run(
-        response=response,
-        topic=state["topic"],
-        user_argument=state["user_argument"],
-    )
+        final_response, results = _output_guard.run(
+            response=response,
+            topic=state["topic"],
+            user_argument=state["user_argument"],
+        )
 
     # Serialize results for state (TypedDict needs serializable types)
-    serialized = [
-        {
-            "guard_name": r.guard_name,
-            "action":     r.action,
-            "reason":     r.reason,
-            "passed":     r.passed,
+        serialized = [
+            {
+                "guard_name": r.guard_name,
+                "action":     r.action,
+                "reason":     r.reason,
+                "passed":     r.passed,
+            }
+            for r in results
+        ]
+        for r in results:
+            record_guard_result(
+                guard_name=r.guard_name,
+                action=r.action,
+                guard_type="output",
+            )
+
+        logger.info("[Node: output_guard] Output guardrails complete.")
+
+        return {
+            "ai_response":          final_response,
+            "output_guard_results": serialized,
         }
-        for r in results
-    ]
-
-    logger.info("[Node: output_guard] Output guardrails complete.")
-
-    return {
-        "ai_response":          final_response,
-        "output_guard_results": serialized,
-    }
 
 
 
@@ -510,25 +581,35 @@ def rag_retrieval_node(state:DebateState)-> dict:
     if not query.strip():
         return {"rag_context":"No relevant evidence retrieved."}
 
-    try:
-        chroma_docs=_chroma_store.retrieve_similar(query=f"{topic}: {query}",k=2)
-        pinecone_docs=_pinecone_db.retrieve_mmr(
-            query=f"{topic}:{query}",
-            k=2,
-            lambda_mult=0.5
-        )
+    with get_logfire_span(
+        "node.rag_retrieval",
+        turn=state["turn_number"],
+        topic=topic[:50],
+    ):
+        try:
+            chroma_docs=_chroma_store.retrieve_similar(query=f"{topic}: {query}",k=2)
+            pinecone_docs=_pinecone_db.retrieve_mmr(
+                query=f"{topic}:{query}",
+                k=2,
+                lambda_mult=0.5
+            )
 
-        all_docs = chroma_docs + pinecone_docs
-        rag_context = _format_docs(all_docs)
-        logger.info(
-            f"[Node: rag_retrieve] Retrieved "
-            f"{len(chroma_docs)} chroma + "
-            f"{len(pinecone_docs)} pinecone docs"
-        )
-        return {"rag_context": rag_context}
-    except Exception as e:
-        logger.warning(f"[Node: rag_retrieve] Failed: {e}")
-        return {"rag_context": "Evidence retrieval unavailable."}
+            all_docs = chroma_docs + pinecone_docs
+            rag_context = _format_docs(all_docs)
+
+            record_rag_retrieval(
+                chroma_count=len(chroma_docs),
+                pinecone_count=len(pinecone_docs),
+            )
+            logger.info(
+                f"[Node: rag_retrieve] Retrieved "
+                f"{len(chroma_docs)} chroma + "
+                f"{len(pinecone_docs)} pinecone docs"
+            )
+            return {"rag_context": rag_context}
+        except Exception as e:
+            logger.warning(f"[Node: rag_retrieve] Failed: {e}")
+            return {"rag_context": "Evidence retrieval unavailable."}
     
 
 
@@ -556,55 +637,66 @@ def update_memory_node(state: DebateState) -> dict:
         f"[Node: memory_update] Updating memory | turn={state['turn_number']}"
     )
 
-    user_argument = state.get("user_argument", "")
-    ai_response   = state.get("ai_response", "")
-    quality       = state.get("argument_quality", "weak")
-    score         = state.get("argument_score", 0)
-    turn_number   = state.get("turn_number", 1)
-    fallacy_name  = state.get("fallacy_name", "none")
+    with get_logfire_span(
+        "node.update_memory",
+        turn=state["turn_number"],
+    ):
+        
 
-    if _buffer_memory.is_near_limit():
-        logger.info(
-            "[Node: memory_update] Buffer near limit — "
-            "popping oldest messages for summary"
-        )
-        # Pop 2 oldest messages (1 turn = human + AI)
-        oldest_messages = _buffer_memory.pop_oldest(2)
+        user_argument = state.get("user_argument", "")
+        ai_response   = state.get("ai_response", "")
+        quality       = state.get("argument_quality", "weak")
+        score         = state.get("argument_score", 0)
+        turn_number   = state.get("turn_number", 1)
+        fallacy_name  = state.get("fallacy_name", "none")
 
-        if oldest_messages:
-            _summary_memory.update(oldest_messages)
-            logger.info("[Node: memory_update] Summary updated from popped messages")
+        if _buffer_memory.is_near_limit():
+            logger.info(
+                "[Node: memory_update] Buffer near limit — "
+                "popping oldest messages for summary"
+            )
+            # Pop 2 oldest messages (1 turn = human + AI)
+            oldest_messages = _buffer_memory.pop_oldest(2)
 
-    # ── 2. Buffer: add this turn 
-    _buffer_memory.add_turn(user_argument, ai_response)
+            if oldest_messages:
+                _summary_memory.update(oldest_messages)
+                logger.info("[Node: memory_update] Summary updated from popped messages")
+
+        # ── 2. Buffer: add this turn 
+        _buffer_memory.add_turn(user_argument, ai_response)
 
     
-    _vector_memory.store_argument(
-        argument=user_argument,
-        turn_number=turn_number,
-        quality=quality,
-        score=float(score),
-        fallacy_name=fallacy_name,  
-    )
-    similar_past_args = []
-    if turn_number > 1:
-        similar_past_args = _vector_memory.find_similar(user_argument)
+        _vector_memory.store_argument(
+            argument=user_argument,
+            turn_number=turn_number,
+            quality=quality,
+            score=float(score),
+            fallacy_name=fallacy_name,  
+        )
+        similar_past_args = []
+        if turn_number > 1:
+            similar_past_args = _vector_memory.find_similar(user_argument)
 
-        if similar_past_args:
-            logger.info(
-                f"[Node: memory_update] "
-                f"Found {len(similar_past_args)} similar past arguments"
-            )
+            if similar_past_args:
+                logger.info(
+                    f"[Node: memory_update] "
+                    f"Found {len(similar_past_args)} similar past arguments"
+                )
 
-    debate_summary = _summary_memory.get_summary()
+        debate_summary = _summary_memory.get_summary()
 
-    logger.info("[Node: memory_update] All memory updated.")
+        record_session_turn(
+            turn_number=turn_number,
+            topic=state["topic"],
+        )
 
-    return {
-        "debate_summary":    debate_summary,
-        "similar_past_args": similar_past_args,
-        "memory_updated":    True,
-    }
+        logger.info("[Node: memory_update] All memory updated.")
+
+        return {
+            "debate_summary":    debate_summary,
+            "similar_past_args": similar_past_args,
+            "memory_updated":    True,
+        }
 
 
 # ── Router ─────────────────────────────────────────────────────────────────────
