@@ -107,7 +107,14 @@ class DebateService:
                 "debate_summary": _summary_memory_snapshot(),
                 "similar_past_args":[],
                 "memory_updated": False,
-                "rag_context":""
+                "rag_context":"",
+
+                "input_guard_passed":   True,
+                "input_guard_action":   "",
+                "input_guard_reason":   "",
+                "output_guard_results": [],
+
+
             }
 
             # Run through graph
@@ -136,7 +143,11 @@ class DebateService:
                 "debate_summary":    final_state.get("debate_summary", ""),
                 "similar_past_args": final_state.get("similar_past_args", []),
                 "memory_updated":    final_state.get("memory_updated", False),
-                "rag_context":       final_state.get("rag_context","")
+                "rag_context":       final_state.get("rag_context",""),
+                "input_guard_passed":   final_state.get("input_guard_passed", True),
+                "input_guard_action":   final_state.get("input_guard_action", ""),
+                "input_guard_reason":   final_state.get("input_guard_reason", ""),
+                "output_guard_results": final_state.get("output_guard_results", []),
             }
 
         except Exception as e:

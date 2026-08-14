@@ -68,3 +68,29 @@ TASK_DEBATE         = "debate"
 TASK_FALLACY        = "fallacy"
 TASK_SUMMARY        = "summary"
 TASK_EXPLANATION    = "explanation"
+
+
+# Guardrails
+NODE_INPUT_GUARD = "input_guardrail"
+NODE_OUTPUT_GUARD= "output_guardrail"
+
+# Guard actions
+GUARD_PASS = "pass"
+GUARD_BLOCK = "block"
+GUARD_WARN = "warn"
+
+# Guard names
+GUARD_LENGTH="length_check"
+GUARD_PII="pii_detection"
+GUARD_PROMPT_INJECTION="prompt_injection"
+GUARD_HATE_SPEECH="hate_speech"
+GUARD_TOPIC_RELEVANCE="topic_relevance"
+GUARD_TOXICITY="toxicity_filter"
+GUARD_RELEVANCE="response_relevance"
+GUARD_DISCLAIMER="legal_disclaimer"
+GUARD_SENSITIVE="sensitive_topic"
+
+SENSITIVE_TOPICS = [
+    "suicide","self-harm","drugs","voilence",
+    "weapons","terrorism","abuse", "mental health"
+]

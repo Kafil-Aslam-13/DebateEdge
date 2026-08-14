@@ -59,6 +59,12 @@ class DebateState(TypedDict):
     # rag
     rag_context:str
 
+    # Guardrails ───────────────────────────────────────────────────────
+    input_guard_passed:   bool        # False if input blocked
+    input_guard_action:   str         # GUARD_PASS | GUARD_WARN | GUARD_BLOCK
+    input_guard_reason:   str       
+    output_guard_results: list        
+
 
     # Error Tracking
     error:str

@@ -96,7 +96,25 @@ def run_debate():
             debate_history=debate_history[:-1],
             turn_number=turn,
         )
+        # Sprint 7 — show guardrail feedback
+        if not result.get("input_guard_passed"):
+            print(f"\n ARGUMENT BLOCKED")
+            print("─" * 40)
+            print(f"  {result.get('input_guard_reason', 'Input failed validation.')}")
+            print("─" * 40)
+            debate_history.append(("human", user_argument))
+            debate_history.append(("assistant", result.get("ai_response", "")))
+            turn += 1
+            continue
 
+        # Show any output guard warnings
+        output_results = result.get("output_guard_results", [])
+        warnings = [r for r in output_results if r.get("action") == "warn"]
+        if warnings:
+            print(f"\n  ⚠️  Note: {warnings[0].get('reason', '')}")
+
+
+            
         # ── Show analysis results ─────────────────────────────────────────────
         quality = result.get("argument_quality", "unknown")
         score = result.get("argument_score", 0)

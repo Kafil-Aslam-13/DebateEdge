@@ -28,6 +28,7 @@ from src.core.constants import (
     NODE_SCORE, NODE_STRONG, NODE_WEAK, NODE_FALLACY_DETECT,
     NODE_MEMORY_UPDATE , NODE_RAG_RETRIEVE ,
     TASK_CLASSIFICATION,TASK_DEBATE,TASK_SCORING,
+    NODE_INPUT_GUARD,NODE_OUTPUT_GUARD,GUARD_BLOCK,GUARD_PASS
 )
 
 from src.core.exceptions import GraphError
@@ -55,6 +56,11 @@ from src.retrieval.chroma_store import DebateChromaStore
 from src.retrieval.pinecone_db import DebatePineconeDB
 from langchain_core.documents import Document
 
+
+
+from src.guardrails.input_guard import InputGuard
+from src.guardrails.output_guard import OutputGuard
+
 logger = get_logger(__name__)
 #  memory instance
 _buffer_memory  = DebateBufferMemory(window_size=6)
@@ -64,6 +70,10 @@ _vector_memory  = DebateVectorMemory(top_k=3)
 # module-level retrieval instance
 _chroma_store  = DebateChromaStore()
 _pinecone_db   = DebatePineconeDB()
+
+# module level guardrail instances
+_input_guard  = InputGuard()
+_output_guard = OutputGuard()
 
 
 def _prompt_to_messages(prompt_value) -> list[dict]:
@@ -320,6 +330,56 @@ def detect_fallacy_details_node(state: DebateState) -> dict:
         }
 
 
+
+
+def input_guardrail_node(state: DebateState) -> dict:
+    """Run all input guardrails before processing argument.
+
+    If BLOCKED: set has_error=True so all subsequent nodes skip.
+    The generate_counterargument_node checks has_error and returns
+    the block reason as the ai_response instead.
+
+    WHY AT START OF GRAPH:
+    Guardrails must run before any LLM call is made.
+    Injecting them as the first node means the rest of the graph
+    is protected automatically — no changes needed in other nodes.
+    """
+    logger.info(
+        f"[Node: input_guard] Running input guardrails | "
+        f"turn={state['turn_number']}"
+    )
+
+    result, all_results = _input_guard.run(
+        argument=state["user_argument"],
+        topic=state["topic"],
+    )
+
+    if result.action == GUARD_BLOCK:
+        logger.warning(
+            f"[Node: input_guard] BLOCKED | reason={result.reason}"
+        )
+        return {
+            "input_guard_passed": False,
+            "input_guard_action": GUARD_BLOCK,
+            "input_guard_reason": result.reason,
+            "has_error":          True,
+            "error":              f"Input blocked: {result.reason}",
+        }
+
+    logger.info("[Node: input_guard] All input checks passed.")
+    return {
+        "input_guard_passed": True,
+        "input_guard_action": result.action,
+        "input_guard_reason": result.reason,
+        "has_error":          False,
+    }
+
+
+
+
+
+
+
 def generate_counterargument_node(state: DebateState) -> dict:
     """Generate AI counterargument adapted to argument quality."""
     logger.info("[Node: counter] Generating counterargument")
@@ -376,6 +436,60 @@ def generate_counterargument_node(state: DebateState) -> dict:
             "error":       str(e),
             "has_error":   True,
         }
+
+
+
+
+
+
+def output_guardrail_node(state: DebateState) -> dict:
+    """Run all output guardrails on AI response before returning.
+
+    Modifies ai_response in place if disclaimer needed.
+    Replaces ai_response if toxicity detected.
+    Logs all check results to state.
+    """
+    logger.info("[Node: output_guard] Running output guardrails")
+
+    response = state.get("ai_response", "")
+
+    if not response:
+        return {
+            "output_guard_results": [],
+        }
+
+    final_response, results = _output_guard.run(
+        response=response,
+        topic=state["topic"],
+        user_argument=state["user_argument"],
+    )
+
+    # Serialize results for state (TypedDict needs serializable types)
+    serialized = [
+        {
+            "guard_name": r.guard_name,
+            "action":     r.action,
+            "reason":     r.reason,
+            "passed":     r.passed,
+        }
+        for r in results
+    ]
+
+    logger.info("[Node: output_guard] Output guardrails complete.")
+
+    return {
+        "ai_response":          final_response,
+        "output_guard_results": serialized,
+    }
+
+
+
+
+
+
+
+
+
 def rag_retrieval_node(state:DebateState)-> dict:
     """retrieves relevant evidence before generating counterargument.
     TWO-STAGE RETRIEVAL:
@@ -515,7 +629,7 @@ def route_by_quality(state: DebateState) -> str:
 def build_debate_graph() -> StateGraph:
     """Build and compile the debate LangGraph."""
     graph = StateGraph(DebateState)
-
+    graph.add_node(NODE_INPUT_GUARD,    input_guardrail_node)
     graph.add_node(NODE_CLASSIFY, classify_argument_node)
     graph.add_node(NODE_SCORE,    score_argument_node)
     graph.add_node(NODE_FALLACY_DETECT,detect_fallacy_details_node)
@@ -524,9 +638,18 @@ def build_debate_graph() -> StateGraph:
     graph.add_node(NODE_FALLACY,  handle_fallacy_node)
     graph.add_node(NODE_RAG_RETRIEVE,rag_retrieval_node)
     graph.add_node(NODE_COUNTER,  generate_counterargument_node)
+    graph.add_node(NODE_OUTPUT_GUARD,output_guardrail_node)
     graph.add_node(NODE_MEMORY_UPDATE,update_memory_node)
 
-    graph.set_entry_point(NODE_CLASSIFY)
+    graph.set_entry_point(NODE_INPUT_GUARD)
+    graph.add_conditional_edges(
+        NODE_INPUT_GUARD,
+        lambda state: NODE_CLASSIFY if state.get("input_guard_passed") else NODE_COUNTER,
+        {
+            NODE_CLASSIFY: NODE_CLASSIFY,
+            NODE_COUNTER:  NODE_COUNTER,   # blocked → skip to counter (shows reason)
+        }
+    )
 
     graph.add_edge(NODE_CLASSIFY, NODE_SCORE)
 
@@ -545,8 +668,12 @@ def build_debate_graph() -> StateGraph:
     graph.add_edge(NODE_WEAK,    NODE_RAG_RETRIEVE)
     graph.add_edge(NODE_FALLACY, NODE_RAG_RETRIEVE)
     graph.add_edge(NODE_RAG_RETRIEVE,NODE_COUNTER)
+
+
+
+    graph.add_edge(NODE_COUNTER,       NODE_OUTPUT_GUARD)
+    graph.add_edge(NODE_OUTPUT_GUARD,  NODE_MEMORY_UPDATE)
     
-    graph.add_edge(NODE_COUNTER,NODE_MEMORY_UPDATE)
     graph.add_edge(NODE_MEMORY_UPDATE, END)
 
     compiled = graph.compile()
