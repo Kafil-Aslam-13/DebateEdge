@@ -180,10 +180,74 @@ def run_debate():
         debate_history.append(("assistant", ai_response))
         turn += 1
 
+        # Sprint 9 — turn evaluation
+        eval_score    = result.get("turn_eval_score", 0)
+        eval_grade    = result.get("turn_eval_grade", "")
+        eval_feedback = result.get("turn_eval_feedback", "")
+
+        if eval_grade:
+            grade_icons = {
+                "excellent": "★★★★",
+                "good":      "★★★☆",
+                "average":   "★★☆☆",
+                "poor":      "★☆☆☆",
+            }
+            print(f"\nAI RESPONSE QUALITY")
+            print("─" * 40)
+            print(
+                f"  Grade:    {grade_icons.get(eval_grade, '')} "
+                f"{eval_grade.upper()} ({eval_score}/10)"
+            )
+            if eval_feedback:
+                print(f"  Feedback: {eval_feedback}")
+
+    # Sprint 9 — session evaluation on debate end
     print(f"\n{'='*65}")
     print(f"  Debate Complete — {turn - 1} turns")
-    print(f"  Fallacy detection (Sprint 3) and memory (Sprint 4) coming next.")
-    print(f"{'='*65}\n")
+    print(f"{'='*65}")
+
+    session_eval = service.evaluate_session()
+
+    if session_eval:
+        print(f"\nSESSION EVALUATION")
+        print("─" * 40)
+
+        direction_icons = {
+            "improving":          "📈 IMPROVING",
+            "declining":          "📉 DECLINING",
+            "stable":             "➡️  STABLE",
+            "insufficient_data":  "📊 INSUFFICIENT DATA",
+        }
+        print(
+            f"  Progress:     "
+            f"{direction_icons.get(session_eval.user_improvement, '')}"
+        )
+        print(
+            f"  First half:   "
+            f"{session_eval.avg_score_first_half:.1f}/10 avg"
+        )
+        print(
+            f"  Second half:  "
+            f"{session_eval.avg_score_second_half:.1f}/10 avg"
+        )
+        print(f"  Score trend:  {session_eval.score_trend}")
+        print(f"  Overall grade: {session_eval.overall_grade.upper()}")
+        print()
+        print(f"  Strong args:  {session_eval.strong_count}")
+        print(f"  Weak args:    {session_eval.weak_count}")
+        print(f"  Fallacies:    {session_eval.fallacy_count}")
+        print(f"  Best turn:    Turn {session_eval.best_turn}")
+        print(f"  Worst turn:   Turn {session_eval.worst_turn}")
+        print()
+        print(f"  Tokens used:  {session_eval.total_tokens:,}")
+        print(f"  Cost:         ${session_eval.total_cost_usd:.6f}")
+        print(f"  Cache hits:   {session_eval.cache_hits}")
+        print()
+        print(f"COACHING ADVICE")
+        print("─" * 40)
+        print(f"  {session_eval.improvement_advice}")
+
+    print(f"\n{'='*65}\n")
 
 
 if __name__ == "__main__":

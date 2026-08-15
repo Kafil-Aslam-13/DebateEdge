@@ -65,7 +65,12 @@ class DebateState(TypedDict):
     input_guard_reason:   str       
     output_guard_results: list        
 
+    # Evaluation
+    turn_eval_score:    int     # AI response quality score (0-10)
+    turn_eval_grade:    str     # excellent/good/average/poor
+    turn_eval_feedback: str
 
+    
     # Error Tracking
     error:str
     has_error: bool

@@ -60,6 +60,7 @@ NODE_COUNTER  = "generate_counterargument"
 NODE_FALLACY_DETECT = "detect_fallacy_details"
 NODE_MEMORY_UPDATE = "update_memory"
 NODE_RAG_RETRIEVE = "rag_retrieval"
+NODE_EVALUATE = "evaluate_turn"
 
 #  Task types for LLM GATEWAY
 TASK_CLASSIFICATION = "classification"
@@ -94,3 +95,16 @@ SENSITIVE_TOPICS = [
     "suicide","self-harm","drugs","voilence",
     "weapons","terrorism","abuse", "mental health"
 ]
+
+
+# Evaluation grades
+EVAL_EXCELLENT  = "excellent"
+EVAL_GOOD       = "good"
+EVAL_AVERAGE    = "average"
+EVAL_POOR       = "poor"
+
+# Improvement direction
+IMPROVING   = "improving"
+DECLINING   = "declining"
+STABLE      = "stable"
+INSUFFICIENT = "insufficient_data"

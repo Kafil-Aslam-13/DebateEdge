@@ -28,7 +28,8 @@ from src.core.constants import (
     NODE_SCORE, NODE_STRONG, NODE_WEAK, NODE_FALLACY_DETECT,
     NODE_MEMORY_UPDATE , NODE_RAG_RETRIEVE ,
     TASK_CLASSIFICATION,TASK_DEBATE,TASK_SCORING,
-    NODE_INPUT_GUARD,NODE_OUTPUT_GUARD,GUARD_BLOCK,GUARD_PASS
+    NODE_INPUT_GUARD,NODE_OUTPUT_GUARD,GUARD_BLOCK,GUARD_PASS,
+    NODE_EVALUATE
 )
 
 from src.core.exceptions import GraphError
@@ -71,6 +72,8 @@ from src.observability.metrics import (
     record_guard_result,
 )
 
+from src.evaluation.evaluator import DebateEvaluator
+
 
 
 logger = get_logger(__name__)
@@ -86,6 +89,8 @@ _pinecone_db   = DebatePineconeDB()
 # module level guardrail instances
 _input_guard  = InputGuard()
 _output_guard = OutputGuard()
+
+evaluator=DebateEvaluator()
 
 
 def _prompt_to_messages(prompt_value) -> list[dict]:
@@ -129,6 +134,7 @@ def reset_memory() -> None:
     _summary_memory.clear()
     _vector_memory.clear()
     reset_gateway()
+    evaluator.reset() 
     logger.info("All memory cleared for new debate session.")
 
 def get_buffer_memory() -> DebateBufferMemory:
@@ -716,6 +722,52 @@ def route_by_quality(state: DebateState) -> str:
     return next_node
 
 
+
+
+
+def evaluate_turn_node(state: DebateState) -> dict:
+    """Evaluate turn quality after counterargument is generated.
+
+    Full session evaluation runs on debate end (called from service).
+    """
+    logger.info(
+        f"[Node: evaluate] Evaluating turn {state['turn_number']}"
+    )
+
+    with get_logfire_span(
+        "node.evaluate_turn",
+        turn=state["turn_number"],
+    ):
+        try:
+            turn_eval = evaluator.evaluate_turn(
+                turn_number=state["turn_number"],
+                user_argument=state.get("user_argument", ""),
+                ai_response=state.get("ai_response", ""),
+                argument_score=state.get("argument_score", 0),
+                argument_quality=state.get("argument_quality", "weak"),
+                topic=state.get("topic", ""),
+            )
+
+            logger.info(
+                f"[Node: evaluate] "
+                f"AI score={turn_eval.ai_response_score} | "
+                f"grade={turn_eval.grade}"
+            )
+
+            return {
+                "turn_eval_score":    turn_eval.ai_response_score,
+                "turn_eval_grade":    turn_eval.grade,
+                "turn_eval_feedback": turn_eval.ai_feedback,
+            }
+
+        except Exception as e:
+            logger.warning(f"[Node: evaluate] Failed: {e}")
+            return {
+                "turn_eval_score":    5,
+                "turn_eval_grade":    "average",
+                "turn_eval_feedback": "Evaluation unavailable.",
+            }
+
 # ── Graph builder ──────────────────────────────────────────────────────────────
 
 def build_debate_graph() -> StateGraph:
@@ -731,6 +783,7 @@ def build_debate_graph() -> StateGraph:
     graph.add_node(NODE_RAG_RETRIEVE,rag_retrieval_node)
     graph.add_node(NODE_COUNTER,  generate_counterargument_node)
     graph.add_node(NODE_OUTPUT_GUARD,output_guardrail_node)
+    graph.add_node(NODE_EVALUATE,evaluate_turn_node)
     graph.add_node(NODE_MEMORY_UPDATE,update_memory_node)
 
     graph.set_entry_point(NODE_INPUT_GUARD)
@@ -764,7 +817,9 @@ def build_debate_graph() -> StateGraph:
 
 
     graph.add_edge(NODE_COUNTER,       NODE_OUTPUT_GUARD)
-    graph.add_edge(NODE_OUTPUT_GUARD,  NODE_MEMORY_UPDATE)
+    graph.add_edge(NODE_OUTPUT_GUARD,NODE_EVALUATE)
+    graph.add_edge(NODE_EVALUATE,NODE_MEMORY_UPDATE)
+    
     
     graph.add_edge(NODE_MEMORY_UPDATE, END)
 

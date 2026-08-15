@@ -21,7 +21,7 @@ from src.graphs.debate_graph import get_debate_graph,reset_memory,get_buffer_mem
 from src.graphs.state import DebateState
 from src.parsers.debate_parsers import opening_statement_parser
 from src.prompts.debate_prompts import opening_prompt
-
+from src.graphs.debate_graph import evaluator
 logger = get_logger(__name__)
 
 def _summary_memory_snapshot() -> str:
@@ -55,6 +55,14 @@ class DebateService:
             f"DebateService (Sprint 2) initialised | "
             f"model={settings.default_model}"
         )
+
+    def evaluate_session(self):
+        """Run full session evaluation — call when debate ends.
+
+        Returns SessionEvaluation or None if insufficient turns.
+        """
+        return evaluator.evaluate_session()
+    
 
     def open_debate(self, topic: str, user_side: str) -> str:
         """Generate AI opening statement + reset all memory for new session"""
@@ -114,7 +122,9 @@ class DebateService:
                 "input_guard_reason":   "",
                 "output_guard_results": [],
 
-
+                "turn_eval_score":    0,
+                "turn_eval_grade":    "",
+                "turn_eval_feedback": "",
             }
 
             # Run through graph
@@ -148,6 +158,9 @@ class DebateService:
                 "input_guard_action":   final_state.get("input_guard_action", ""),
                 "input_guard_reason":   final_state.get("input_guard_reason", ""),
                 "output_guard_results": final_state.get("output_guard_results", []),
+                "turn_eval_score":    final_state.get("turn_eval_score", 0),
+                "turn_eval_grade":    final_state.get("turn_eval_grade", ""),
+                "turn_eval_feedback": final_state.get("turn_eval_feedback", ""),
             }
 
         except Exception as e:
