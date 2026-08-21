@@ -36,3 +36,4 @@ app/frontend_react/.env.production
 
 !.env.example
 !app/frontend_react/.env.example
+.vercel

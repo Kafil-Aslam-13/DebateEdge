@@ -34,7 +34,7 @@ import os
 ALLOWED_ORIGINS = [
     "http://localhost:3000",          # local dev
     "http://localhost:8000",
-    "https://debateedge.onrender.com", # production frontend
+    "https://debate-edge.vercel.app/",# production frontend
 ]
 extra = os.getenv("EXTRA_ORIGINS", "")
 if extra:
