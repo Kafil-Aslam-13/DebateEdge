@@ -149,14 +149,21 @@ class InputGuard:
                 self._pii_guard.validate(argument)
                 return GuardResult.passed_result(GUARD_PII)
             except Exception as e:
-                return GuardResult.blocked_result(
-                    GUARD_PII,
-                    "Your argument contains personal information"
-                    "(email,phone,etc). Please remove them before continuing"
+
+                logger.warning(
+                    f"PII validator triggered for argument: {argument!r}"
                 )
+                logger.warning(
+                    f"PII validator failed: {type(e).__name__}: {e}"
+                )
+                # return GuardResult.blocked_result(
+                #     GUARD_PII,
+                #     "Your argument contains personal information"
+                #     "(email,phone,etc). Please remove them before continuing"
+                # )
         # regex  fallback if hub not availible
         patterns = {
-            "email":   r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+",
+            "email": r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
             "phone":   r"\b(\+?\d{1,3}[\s\-]?)?(\(?\d{3}\)?[\s\-]?)?\d{3}[\s\-]?\d{4}\b",
             "ssn":     r"\b\d{3}-\d{2}-\d{4}\b",
         }

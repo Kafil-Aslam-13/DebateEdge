@@ -16,7 +16,7 @@ task_routing:
 models:
   - model_name: "fast"
     litellm_params:
-      model: "groq/llama-3.1-8b-instant"
+      model: "groq/openai/gpt-oss-120b"
       api_key: "os.environ/GROQ_API_KEY"
     model_info:
       max_tokens: 512
@@ -32,18 +32,18 @@ models:
   
   - model_name: "powerful"
     litellm_params:
-      model: "groq/llama-3.3-70b-versatile"
+      model: "groq/qwen/qwen3.6-27b"
       api_key: "os.environ/GROQ_API_KEY"
     model_info:
-      max_tokens: 2048
+      max_tokens: 512
       temperature: 0.7
 
   - model_name: "powerful"
     litellm_params:
-      model: "groq/llama-3.3-70b-versatile"
+      model: "groq/openai/gpt-oss-120b"
       api_key: "os.environ/GROQ_API_KEY"
     model_info:
-      max_tokens: 2048
+      max_tokens: 512
       temperature: 0.7
 
 #  fallback chain - if fast fails try powerful , vice versa

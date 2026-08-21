@@ -247,6 +247,26 @@ def run_debate():
         print("─" * 40)
         print(f"  {session_eval.improvement_advice}")
 
+        from src.gateway.cost_optimizer import CostOptimizer
+        optimizer = CostOptimizer()
+        cost_report = optimizer.get_turn_cost_report()
+
+        print(f"\nCOST THIS TURN")
+        print("─" * 40)
+        print(f"  Tokens:     {cost_report['total_tokens']:,}")
+        print(f"  Cost:       ${cost_report['total_cost_usd']:.6f}")
+        print(f"  Cache hits: {cost_report['cache_hits']}")
+
+        # Sprint 10 — session cost report
+        cost_report = optimizer.get_session_cost_report()
+        print(f"\nSESSION COST SUMMARY")
+        print("─" * 40)
+        print(f"  Total tokens:   {cost_report['total_tokens']:,}")
+        print(f"  Total cost:     ${cost_report['total_cost_usd']:.6f}")    
+        print(f"  Cache hit rate: {cost_report['cache_hit_rate_pct']}%")
+        print(f"  Tokens saved:   {cost_report['estimated_saved_tokens']:,}")
+        print(f"  USD saved:      ${cost_report['estimated_saved_usd']:.6f}")
+
     print(f"\n{'='*65}\n")
 
 

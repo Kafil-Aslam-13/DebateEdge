@@ -19,7 +19,7 @@ GRAPH STRUCTURE:
 
 import json
 from langgraph.graph import StateGraph, END
-
+import re
 from src.core.config import get_settings
 from src.gateway.llm_gateway import get_gateway, reset_gateway
 from src.core.constants import (
@@ -75,6 +75,9 @@ from src.observability.metrics import (
 from src.evaluation.evaluator import DebateEvaluator
 
 
+from src.gateway.cost_optimizer import CostOptimizer
+
+
 
 logger = get_logger(__name__)
 #  memory instance
@@ -92,6 +95,53 @@ _output_guard = OutputGuard()
 
 evaluator=DebateEvaluator()
 
+
+_cost_optimizer=CostOptimizer()
+
+
+
+
+def clean_ai_response(content: str) -> str:
+    """Remove leaked reasoning/meta sections before returning AI response."""
+
+    if not content:
+        return ""
+
+    text = content.strip()
+
+    # Remove complete <think>...</think> blocks
+    text = re.sub(
+        r"<think>.*?</think>",
+        "",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    # Remove an unmatched opening <think>
+    text = re.sub(
+        r"<think>.*$",
+        "",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    # Remove an unmatched closing tag
+    text = re.sub(
+        r"</think>",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # Remove common leaked reasoning prefixes
+    text = re.sub(
+        r"^\s*(Thinking Process|Chain of Thought|Reasoning|Analysis)\s*:\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    return text.strip()
 
 def _prompt_to_messages(prompt_value) -> list[dict]:
     """Convert LangChain prompt messages to OpenAI-compatible messages."""
@@ -119,6 +169,22 @@ def _prompt_to_messages(prompt_value) -> list[dict]:
 
     return messages
 
+def input_blocked_node(state: DebateState) -> dict:
+    """Handle an argument rejected by input guardrails."""
+    reason = state.get(
+        "input_guard_reason",
+        "Your argument was rejected by the input guard."
+    )
+
+    logger.warning(
+        f"[Node: input_blocked] Request rejected | reason={reason}"
+    )
+
+    return {
+        "ai_response": reason,
+        "has_error": True,
+    }
+
 def _format_docs(docs:list[Document])->str:
     """Format retrieved documents into a single context string"""
     if not docs:
@@ -135,6 +201,7 @@ def reset_memory() -> None:
     _vector_memory.clear()
     reset_gateway()
     evaluator.reset() 
+    _cost_optimizer.reset()
     logger.info("All memory cleared for new debate session.")
 
 def get_buffer_memory() -> DebateBufferMemory:
@@ -457,6 +524,24 @@ def generate_counterargument_node(state: DebateState) -> dict:
             ai_side = "against" if state["user_side"] == "for" else "for"
             quality = state.get("argument_quality", QUALITY_WEAK)
 
+            raw_history = state.get("debate_history",[])
+            history_tuples=[]
+            if raw_history:
+                from langchain_core.messages import HumanMessage ,AIMessage
+                for msg in raw_history:
+                    if isinstance(msg,HumanMessage):
+                        history_tuples.append(("human",msg.content))
+                    elif isinstance(msg,AIMessage):
+                        history_tuples.append(("assistant",msg.content))
+            compressed_history = _cost_optimizer.compress_history(
+                history_tuples
+            )
+            user_argument = _cost_optimizer.enforce_argument_budget(
+                state["user_argument"]
+
+            )
+
+
             prompt_map = {
                 QUALITY_STRONG:  strong_handler_prompt,
                 QUALITY_WEAK:    weak_handler_prompt,
@@ -485,14 +570,27 @@ def generate_counterargument_node(state: DebateState) -> dict:
                 messages,
             )
 
+            recent_scores = [e.argument_score
+                             for e in evaluator.get_turn_history()[-3:]]
+            smart_alias= _cost_optimizer.get_debate_model_alias(
+                recent_scores=recent_scores
+            )
+            task = "debate" if smart_alias == "powerful" else "scoring"
+
+
 
             content = gateway.complete(
                 messages=messages,
-                task_type=TASK_DEBATE,
+                task_type=task,
             )
 
             logger.info("[Node: counter] Counterargument generated successfully.")
-            return {"ai_response": content}
+            cleaned_content=clean_ai_response(content)
+            logger.info(
+                "[Node: counter] Counterargument generated successfully | chars=%d",
+                len(cleaned_content),
+            )
+            return {"ai_response": cleaned_content}
 
         except Exception as e:
             logger.error(f"[Node: counter] Failed: {e}")
@@ -783,18 +881,26 @@ def build_debate_graph() -> StateGraph:
     graph.add_node(NODE_RAG_RETRIEVE,rag_retrieval_node)
     graph.add_node(NODE_COUNTER,  generate_counterargument_node)
     graph.add_node(NODE_OUTPUT_GUARD,output_guardrail_node)
+    graph.add_node("input_blocked", input_blocked_node)
     graph.add_node(NODE_EVALUATE,evaluate_turn_node)
     graph.add_node(NODE_MEMORY_UPDATE,update_memory_node)
 
     graph.set_entry_point(NODE_INPUT_GUARD)
     graph.add_conditional_edges(
+
         NODE_INPUT_GUARD,
-        lambda state: NODE_CLASSIFY if state.get("input_guard_passed") else NODE_COUNTER,
+        lambda state: (
+            NODE_CLASSIFY
+            if state.get("input_guard_passed")
+            else "input_blocked"
+        ),
         {
             NODE_CLASSIFY: NODE_CLASSIFY,
-            NODE_COUNTER:  NODE_COUNTER,   # blocked → skip to counter (shows reason)
+           "input_blocked": "input_blocked",
         }
     )
+
+    graph.add_edge("input_blocked", END)
 
     graph.add_edge(NODE_CLASSIFY, NODE_SCORE)
 

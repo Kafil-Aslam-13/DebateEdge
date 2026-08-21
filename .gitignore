@@ -30,3 +30,9 @@ data/fallacies/*
 # Logfire
 .logfire/
 logs
+app/frontend_react/.env
+app/frontend_react/.env.local
+app/frontend_react/.env.production
+
+!.env.example
+!app/frontend_react/.env.example

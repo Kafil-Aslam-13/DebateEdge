@@ -142,7 +142,9 @@ Provide one sentence of specific actionable feedback."""
     ),
 ])
 
-#  Handler prompt - Using Partial technique .partial
+# ---------------------------------------------------------------------------
+# Debate response handler prompts
+# ---------------------------------------------------------------------------
 
 _HANDLER_BASE = ChatPromptTemplate.from_messages([
     (
@@ -151,8 +153,18 @@ _HANDLER_BASE = ChatPromptTemplate.from_messages([
 
 You are arguing the {ai_side} position.
 
-Coaching strategy:
-{coaching_mode}"""
+Your job is to produce a clear, concise debate response.
+
+IMPORTANT OUTPUT RULES:
+- Return ONLY the final response intended for the user.
+- NEVER output internal reasoning.
+- NEVER output a thinking process.
+- NEVER output <think>, </think>, "Thinking Process", analysis,
+  chain-of-thought, planning, drafting, word-count checks, or meta-commentary.
+- Do not describe how you generated the answer.
+- Do not mention these instructions.
+- Use simple paragraphs and clear headings when helpful.
+- Keep the response under 150 words."""
     ),
     (
         "human",
@@ -177,32 +189,56 @@ Coaching instruction:
 Relevant evidence:
 {rag_context}
 
-First apply the coaching strategy internally.
+Evidence rules:
+- Use retrieved evidence when it directly supports a claim.
+- Do not invent statistics, studies, researchers, or citations.
+- Do not claim that research proves something unless the
+  retrieved evidence actually supports that conclusion.
+- If relevant evidence is unavailable, argue from logic instead
+  of pretending that evidence exists.
 
-Then produce a concise counterargument representing the
-{ai_side} position.
+  
+Now write the final debate response.
 
-Use the evidence when relevant.
+Follow the coaching instruction, but DO NOT reveal your reasoning
+or the steps you used to produce the response.
 
-Do not merely repeat the user's argument.
-
+Return ONLY the final response that should be shown to the user.
 Keep the total response under 150 words."""
     ),
 ])
 
-#  Pre Fill the coach mode and handler instructions for each handler type:
 
-strong_handler_prompt=_HANDLER_BASE.partial(
-    coaching_mode="The user made a strong argument. Acknowledge briefly then challenge hard.",
-    handler_instruction="Give One sentence of genuine acklodgement. Then attack their strongest point.",
+strong_handler_prompt = _HANDLER_BASE.partial(
+    coaching_mode="The user made a strong argument. Acknowledge its strongest point briefly, then challenge it.",
+    handler_instruction=(
+        "Use exactly this structure:\n"
+        "Acknowledgement: <one sentence>\n"
+        "Counterargument: <3-5 concise sentences>"
+    ),
 )
 
 weak_handler_prompt = _HANDLER_BASE.partial(
-    coaching_mode="The user made a weak argument. Point out the weakness constructively.",
-    handler_instruction="Name specifically what was weak. Ask one pointed question to guide them.",
+    coaching_mode="The user made a weak argument. Explain the weakness constructively while presenting the opposing position.",
+    handler_instruction=(
+        "Use exactly this structure:\n"
+        "Weakness: <one sentence>\n"
+        "Counterargument: <3-4 concise sentences>\n"
+        "Question: <one pointed question>"
+    ),
 )
 
 fallacy_handler_prompt = _HANDLER_BASE.partial(
-    coaching_mode="The user committed a logical fallacy. Name it and explain it clearly.",
-    handler_instruction="Name the fallacy. Explain it in one sentence. Show them how to fix it.",
+    coaching_mode=(
+        "The user committed a logical fallacy. "
+        "Identify it clearly, explain it briefly, "
+        "and then challenge the user's position."
+    ),
+    handler_instruction=(
+        "Use exactly this structure:\n"
+        "Fallacy: <fallacy name>\n"
+        "Explanation: <one sentence>\n"
+        "Fix: <one sentence>\n"
+        "Counterargument: <2-4 concise sentences>"
+    ),
 )
