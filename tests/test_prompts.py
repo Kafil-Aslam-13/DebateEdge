@@ -61,6 +61,7 @@ def test_partial_prompts_pre_filled():
             score=8,
             quality_reasoning="good argument",
             ai_side="against",
+            rag_context="No relevant evidence found"
         )
     except Exception as e:
         import pytest
