@@ -51,9 +51,6 @@ groq==0.37.1
 grpcio
 guardrails-ai==0.10.2
 guardrails-ai-types==0.5.0
-guardrails-grhub-detect-pii==0.0.6
-guardrails-grhub-gibberish-text==0.0.1
-guardrails-grhub-toxic-language==0.0.2
 guardrails_hub_types==0.0.4
 h11==0.16.0
 hf-xet==1.6.0
