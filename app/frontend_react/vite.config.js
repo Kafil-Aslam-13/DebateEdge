@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
+
   server: {
     port: 3000,
     proxy: {
@@ -13,16 +14,9 @@ export default defineConfig({
       },
     },
   },
+
   build: {
-    outDir:    "dist",
-    sourcemap: false,    // disable in prod for smaller bundle
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          react: ["react", "react-dom"],
-          axios: ["axios"],
-        },
-      },
-    },
+    outDir: "dist",
+    sourcemap: false,
   },
 });
