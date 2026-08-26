@@ -6,7 +6,7 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      // In dev, proxy /api calls to backend
+      // Dev only: proxy /api → backend
       "/api": {
         target: process.env.VITE_BACKEND_URL || "http://localhost:8000",
         changeOrigin: true,
@@ -14,6 +14,15 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: "dist",
+    outDir:    "dist",
+    sourcemap: false,    // disable in prod for smaller bundle
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ["react", "react-dom"],
+          axios: ["axios"],
+        },
+      },
+    },
   },
 });

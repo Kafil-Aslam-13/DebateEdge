@@ -31,14 +31,7 @@ settings = get_settings()
 
 
 import os
-ALLOWED_ORIGINS = [
-    "http://localhost:3000",          # local dev
-    "http://localhost:8000",
-    "https://debate-edge.vercel.app/",# production frontend
-]
-extra = os.getenv("EXTRA_ORIGINS", "")
-if extra:
-    ALLOWED_ORIGINS.extend(extra.split(","))
+
 
 
 @asynccontextmanager
@@ -78,6 +71,20 @@ app = FastAPI(
 if logfire_ok:
     logfire.instrument_fastapi(app)
 
+ALLOWED_ORIGINS = [
+    "http://localhost:3000", 
+    "http://localhost:5173",         # local dev
+    "http://localhost:8000",
+]
+
+_frontend_url = os.getenv("FRONTEND_URL", "")
+if _frontend_url:
+    ALLOWED_ORIGINS.append(_frontend_url)
+
+extra = os.getenv("EXTRA_ORIGINS", "")
+if extra:
+    ALLOWED_ORIGINS.extend([o.strip() for o in extra.split(",") if o.strip()])
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
@@ -98,6 +105,7 @@ def root() -> dict:
         "version": "0.1.0",
         "docs":    "/docs",
         "health":  "/api/v1/health",
+        "github":  "https://github.com/Kafil-Aslam-13/DebateEdge",
     }
 
 

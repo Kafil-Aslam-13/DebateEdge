@@ -11,6 +11,8 @@ build/
 venv/
 .venv/
 debateedge
+.env.local
+.env.production
 
 # Data
 data/arguments/*
@@ -37,3 +39,7 @@ app/frontend_react/.env.production
 !.env.example
 !app/frontend_react/.env.example
 .vercel
+.env.local
+.env*
+app/frontend_react/node_modules/
+app/frontend_react/dist/
