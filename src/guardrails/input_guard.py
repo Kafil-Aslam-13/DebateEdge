@@ -16,7 +16,11 @@ from src.core.constants import (
     GUARD_TOPIC_RELEVANCE,GUARD_WARN,SENSITIVE_TOPICS,
     TASK_CLASSIFICATION
 )
-
+from src.guardrails.direct_validators import (
+    DirectPIIGuard,
+    DirectToxicGuard,
+    DirectGibberishGuard,
+)
 from src.core.exceptions import ValidationError
 from src.core.logger import get_logger
 from src.gateway.llm_gateway import get_gateway
@@ -66,58 +70,35 @@ class InputGuard:
         logger.info(" Input Guard Initialised")
 
     def _build_pii_guard(self):
-        """PII Detection using Hub validators"""
-        try:
-            from guardrails import Guard , OnFailAction
-            from guardrails.hub import DetectPII
 
-            return Guard().use(
-                DetectPII(
-                    pii_entries=[
-                        "EMAIL_ADDRESS",
-                        "PHONE_NUMBER",
-                        "CREDIT_CARD",
-                        "SSN_OR_ITIN",
-                        "IP_ADDRESS"
-                    ],
-                    on_fail=OnFailAction.EXCEPTION,
-                )
+        """PII detection using direct Presidio (lightweight model)."""
+        try:
+            return DirectPIIGuard(
+                entities=[
+                    "EMAIL_ADDRESS",
+                    "PHONE_NUMBER",
+                    "CREDIT_CARD",
+                    "US_SSN",
+                    "IP_ADDRESS",
+                ]
             )
         except Exception as e:
             logger.warning(f"PII Guard build failed: {e} - will use regex fallback")
             return None
 
     def _build_toxic_guard(self):
-        """Toxic Language Dtetction  Using Guardrails hub Validator."""
+        """Toxic language detection using lightweight profanity filter."""
         try:
-            from guardrails import Guard , OnFailAction
-            from guardrails.hub import ToxicLanguage
-
-            return Guard().use(
-                ToxicLanguage(
-                    threshold=0.5,
-                    validation_method="sentence",
-                    on_fail=OnFailAction.EXCEPTION ,
-
-                )
-            )
+            return DirectToxicGuard(threshold=0.5)
         except Exception as e:
-            logger.warning(f"Toxic Guard build fails {e} - will use llm fallback")
+            logger.warning(f"Toxic Guard build failed {e} - will use llm fallback")
             return None
-
     def _build_gibberish_guard(self):
-        """Gibberish text detection  - proxy for nonsense/injection text."""
+        """Gibberish text detection using heuristic (no model)."""
         try:
-            from guardrails import Guard , OnFailAction
-            from guardrails.hub import GibberishText
-            return Guard().use(
-                GibberishText(
-                    threshold=0.5,
-                    on_fail=OnFailAction.EXCEPTION
-                )
-            )
+            return DirectGibberishGuard(threshold=0.5)
         except Exception as e:
-            logger.warning(f"Gibberish guard build fails: {e} - skipping")
+            logger.warning(f"Gibberish guard build failed: {e} - skipping")
             return None
 
     # Layer 1 i.e Rule Based

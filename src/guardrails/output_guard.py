@@ -29,6 +29,7 @@ from src.core.constants import(
 )
 from src.core.logger import get_logger
 from src.gateway.llm_gateway import get_gateway
+from src.guardrails.direct_validators import DirectToxicGuard
 
 
 logger=get_logger(__name__)
@@ -75,18 +76,9 @@ class OutputGuard:
         logger.info("output guard initialised")
 
     def _build_toxic_guard(self):
-        """toxic language validator for AI output"""
+        """Toxic language validator for AI output — lightweight profanity filter."""
         try:
-            from guardrails import Guard, OnFailAction
-            from guardrails.hub import ToxicLanguage
-
-            return Guard().use(
-                ToxicLanguage(
-                    threshold=0.5,
-                    validation_method="sentence",
-                    on_fail=OnFailAction.EXCEPTION,
-                )
-            )
+            return DirectToxicGuard(threshold=0.5)
         except Exception as e:
             logger.warning(f"Output toxic guard build failed: {e}")
             return None

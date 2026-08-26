@@ -11,23 +11,16 @@ WORKDIR /code
 COPY requirements.txt setup.py ./
 
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
-
-RUN guardrails configure \
-    --token "${GUARDRAILS_API_KEY}" \
-    --disable-metrics \
-    --disable-remote-inferencing
-
-RUN guardrails hub install hub://guardrails/detect_pii --quiet && \
-    guardrails hub install hub://guardrails/toxic_language --quiet && \
-    guardrails hub install hub://guardrails/gibberish_text --quiet
-
-
+    pip install --no-cache-dir -r requirements.txt && \
+    python -m spacy download en_core_web_sm
 
 COPY src ./src
 COPY app/api ./app/api
 COPY configs ./configs
 
+COPY docker/start.sh /code/start.sh
+RUN chmod +x /code/start.sh
+
 EXPOSE 8000
 
-CMD ["sh", "-c", "uvicorn app.api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["/code/start.sh"]
