@@ -13,11 +13,8 @@ COPY requirements.txt setup.py ./
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-RUN --mount=type=secret,id=guardrails_api_key \
-    guardrails configure \
-      --token "$(cat /run/secrets/guardrails_api_key)" \
-      --enable-metrics false \
-      --disable-remote-inferencing && \
+ARG GUARDRAILS_TOKEN
+RUN guardrails configure --token ${GUARDRAILS_TOKEN} --disable-metrics && \
     guardrails hub install hub://guardrails/detect_pii --quiet && \
     guardrails hub install hub://guardrails/toxic_language --quiet && \
     guardrails hub install hub://guardrails/gibberish_text --quiet
