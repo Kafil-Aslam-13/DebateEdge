@@ -9,22 +9,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /code
 
 COPY requirements.txt setup.py ./
+
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-ARG GUARDRAILS_API_KEY
-RUN guardrails configure \
-    --token "${GUARDRAILS_API_KEY}" \
-    --enable-metrics false
-RUN guardrails hub install hub://guardrails/detect_pii --quiet
-RUN guardrails hub install hub://guardrails/toxic_language --quiet
-RUN guardrails hub install hub://guardrails/gibberish_text --quiet
+RUN --mount=type=secret,id=guardrails_api_key \
+    guardrails configure \
+      --token "$(cat /run/secrets/guardrails_api_key)" \
+      --enable-metrics false \
+      --disable-remote-inferencing && \
+    guardrails hub install hub://guardrails/detect_pii --quiet && \
+    guardrails hub install hub://guardrails/toxic_language --quiet && \
+    guardrails hub install hub://guardrails/gibberish_text --quiet
 
 
-COPY src     ./src
+COPY src ./src
 COPY app/api ./app/api
 COPY configs ./configs
-
 
 EXPOSE 8000
 
