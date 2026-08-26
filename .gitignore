@@ -43,3 +43,4 @@ app/frontend_react/.env.production
 .env*
 app/frontend_react/node_modules/
 app/frontend_react/dist/
+.vercel
